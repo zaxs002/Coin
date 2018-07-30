@@ -5,10 +5,10 @@ import (
 	"time"
 	"github.com/PuerkitoBio/goquery"
 	"strings"
-	"BitCoin/cache"
 	"github.com/tidwall/gjson"
+	"sync"
+	"BitCoin/cache"
 	"github.com/gorilla/websocket"
-	"BitCoin/event"
 )
 
 type ZbMessage struct {
@@ -24,110 +24,99 @@ type ZbExchange struct {
 func (ue ZbExchange) CheckCoinExist(symbol string) bool {
 	return true
 }
-func (ue ZbExchange) GetPrice(s string) {
-	all := cache.GetInstance().HGetAll(ue.Name + "-symbols")
-	result, _ := all.Result()
-	utils.GetInfoWS2("wss://api.zb.com:9999/websocket", nil,
-		func(ws *websocket.Conn) {
-			for _, v := range result {
-				ws.WriteJSON(ZbMessage{
-					Event:   "addChannel",
-					Channel: v + "_ticker",
+
+var zbGetPrice sync.Once
+
+func (ue ZbExchange) GetPrice() {
+	zbGetPrice.Do(func() {
+		utils.StartTimer(time.Minute*30, func() {
+			all := cache.GetInstance().HGetAll(ue.Name + "-symbols")
+			aa, _ := all.Result()
+
+			o2n := make(map[string]string)
+
+			utils.GetInfoWS2("wss://api.zb.com:9999/websocket", nil,
+				func(ws *websocket.Conn) {
+					for k, v := range aa {
+						ws.WriteJSON(ZbMessage{
+							Event:   "addChannel",
+							Channel: v + "_ticker",
+						})
+						o2n[v] = k
+					}
+				},
+				func(result gjson.Result) {
+					success := result.Get("success").Bool()
+					if success {
+						result.Get("data").ForEach(func(key, value gjson.Result) bool {
+							m := utils.GetCoinByZb(key.String())
+							base := m["base"]
+							coin := m["coin"]
+							s := base + coin
+							symbol := base + "-" + coin
+							ue.SetSymbol(symbol, s)
+							return true
+						})
+					} else {
+						channel := result.Get("channel").String()
+						last := result.Get("ticker.last").Float()
+						symbol := utils.GetCoinByZb2(channel)["symbol"]
+						s := o2n[symbol]
+
+						ue.SetPrice(s, last)
+					}
 				})
-			}
-		},
-		func(result gjson.Result) {
-			success := result.Get("success").Bool()
-			if success {
-				result.Get("data").ForEach(func(key, value gjson.Result) bool {
-					m := utils.GetCoinByZb(key.String())
-					base := m["base"]
-					coin := m["coin"]
-					symbol := base + coin
-					cache.GetInstance().HSet(ue.Name+"-symbols", symbol, symbol)
-					return true
-				})
-			} else {
-				channel := result.Get("channel").String()
-				last := result.Get("ticker.last").Float()
-				symbol := utils.GetCoinByZb2(channel)["symbol"]
-				cache.GetInstance().HSet(ue.Name, symbol, last)
-			}
 		})
+	})
 }
 
 func (ue *ZbExchange) Run(symbol string) {
-	//var client = &http.Client{}
-	//if !IsServer {
-	//	uProxy, _ := url.Parse("http://127.0.0.1:1080")
-	//
-	//	client = &http.Client{
-	//		Transport: &http.Transport{
-	//			Proxy: http.ProxyURL(uProxy),
-	//		},
-	//	}
-	//}
-	//
-	//client.Timeout = time.Second * 10
-	//
-	//oldSymbol := symbol
-	//containBtc := strings.Contains(symbol, "btc")
-	//coin := ""
-	//if containBtc {
-	//	coins := strings.Split(symbol, "btc")
-	//	if len(coins) < 2 {
-	//		return
-	//	}
-	//	coin = coins[0]
-	//}
-	//symbol = coin + "_btc"
-	//
-	//url := "http://api.zb.com/data/v1/ticker" +
-	//	"?market=" + symbol
-	//
-	//resp, _ := http.NewRequest("GET", url, nil)
-	//
-	//for {
-	//	resp, err := client.Do(resp)
-	//
-	//	if err != nil {
-	//		fmt.Println(err)
-	//		continue
-	//	}
-	//
-	//	buf := bytes.NewBuffer(make([]byte, 0, 512))
-	//
-	//	buf.ReadFrom(resp.Body)
-	//	resp.Body.Close()
-	//
-	//	jsonNode := "ticker.last"
-	//	result := gjson.GetBytes(buf.Bytes(), jsonNode)
-	//	ue.SetPrice(oldSymbol, result.Float())
-	//
-	//	time.Sleep(1 * time.Second)
-	//}
+	ue.SetTradeFee(0.001, 0.001)
 
-	cache.GetInstance().HSet(ue.Name+"-tradeFee", "taker", 0.001)
-	cache.GetInstance().HSet(ue.Name+"-tradeFee", "maker", 0.001)
-
-	event.Bus.Subscribe(ue.Name+"-getprice", ue.GetPrice)
 	//获取currency和转账费
 	utils.StartTimer(time.Minute*30, func() {
-		utils.GetHtml("GET", "https://www.bitkk.com/i/rate", nil, func(result *goquery.Document) {
+		utils.GetHtml("GET", "https://www.zb.cn/i/rate", nil, func(result *goquery.Document) {
 			trs := result.Find("body > div.ch-body > div.envor-content > section.envor-section > div > div > div > article > table > tbody > tr")
 			trs.Each(func(i int, selection *goquery.Selection) {
 				currency := selection.Find("td:nth-child(1)").Text()
 				transferFee := selection.Find("td:nth-child(7)").Text()
+				singleNum := selection.Find("td:nth-child(8)").Text()
+				dayNum := selection.Find("td:nth-child(9)").Text()
 				currency = strings.TrimSpace(currency)
 				currency = strings.ToLower(currency)
+
+				singleNum = strings.TrimSpace(singleNum)
+				singleNum = strings.ToLower(singleNum)
+				singleNum = strings.Replace(singleNum, ",", "", -1)
+
+				dayNum = strings.TrimSpace(dayNum)
+				dayNum = strings.ToLower(dayNum)
+				dayNum = strings.Replace(dayNum, ",", "", -1)
+
 				m := utils.GetByZb(transferFee)
+				m2 := utils.GetByZb(singleNum)
+				m3 := utils.GetByZb(dayNum)
+				info := NewTransferInfo()
+				info.CanWithdraw = 0
 				if currency != "" {
 					n := m["num"]
+					n2 := m2["num"]
+					n3 := m3["num"]
 					if n == "" {
 						n = "-1"
 					}
-					cache.GetInstance().HSet(ue.Name+"-currency", currency, currency)
-					cache.GetInstance().HSet(ue.Name+"-transfer", currency, n)
+					if n2 == "" {
+						n2 = "-1"
+					}
+					if n3 == "" {
+						n3 = "-1"
+					}
+					info.CanWithdraw = 1
+					info.WithdrawFee = n
+					info.MaxWithdraw = n2
+					info.MaxDayWithdraw = n3
+					ue.SetCurrency(currency)
+					ue.SetTransferFee(currency, info)
 				}
 			})
 		})
@@ -142,12 +131,13 @@ func (ue *ZbExchange) Run(symbol string) {
 				m := utils.GetCoinByZb(key.String())
 				base := m["base"]
 				coin := m["coin"]
-				cache.GetInstance().HSet(ue.Name+"-symbols", coin+base, coin+base)
+				s := coin + base
+				newSymbol := coin + "-" + base
+				ue.SetSymbol(newSymbol, s)
 				return true
 			})
 		})
-		event.Bus.Publish(ue.Name+"-getprice", "")
-		event.Bus.Unsubscribe(ue.Name+"-getprice", ue.GetPrice)
+		ue.GetPrice()
 	})
 
 }

@@ -143,19 +143,29 @@ func init() {
 	//bitfinex := NewBitfinexExchange()
 	//bittrex := NewBittrexExchange()
 	//hitbtc := NewHitbtcExchange()
-	//zb := NewZbExchange()
+	zb := NewZbExchange()
 	//gate := NewGateIOExchange()
 	//otcbtc := NewOtcBtcExchange()
-	//exx := NewExxExchange()
 	//bibox := NewBiboxExchange()
 	//hadax := NewHadaxExchange()
 	//bithumb := NewBithumbExchange()
 	//coinbene := NewCoinbeneExchange()
+
+	//有问题
 	//bcex := NewBcexExchange()
-	bitz := NewBitzExchange()
+	//bitz := NewBitzExchange()
+	//exx := NewExxExchange()
+
+	//fcoin := NewFcoinExchange()
+	//coinegg := NewCoineggExchange()
+	//kucoin := NewKuCoinExchange()
+	//bigone := NewBigOneExchange()
+
+	//cryptopia := NewCryptopiaExchange()
+
+
 
 	//lbank := NewLBankExchange()
-	//kucoin := NewKuCoinExchange()
 	//bittrex := NewBittrexExchange()
 	//poloniex := NewPoloniexExchange()
 	//upbit := NewUpbitExchange()
@@ -169,7 +179,7 @@ func init() {
 	//ExchangeList = append(ExchangeList, bitfinex)
 	//ExchangeList = append(ExchangeList, bittrex)
 	//ExchangeList = append(ExchangeList, hitbtc)
-	//ExchangeList = append(ExchangeList, zb)
+	ExchangeList = append(ExchangeList, zb)
 	//ExchangeList = append(ExchangeList, gate)
 	//ExchangeList = append(ExchangeList, otcbtc)
 	//ExchangeList = append(ExchangeList, exx)
@@ -178,9 +188,15 @@ func init() {
 	//ExchangeList = append(ExchangeList, bithumb)
 	//ExchangeList = append(ExchangeList, coinbene)
 	//ExchangeList = append(ExchangeList, bcex)
-	ExchangeList = append(ExchangeList, bitz)
-
+	//ExchangeList = append(ExchangeList, bitz)
+	//ExchangeList = append(ExchangeList, fcoin)
+	//ExchangeList = append(ExchangeList, coinegg)
 	//ExchangeList = append(ExchangeList, kucoin)
+	//ExchangeList = append(ExchangeList, bigone)
+
+	//ExchangeList = append(ExchangeList, cryptopia)
+	//ExchangeList = append(ExchangeList, lbank)
+
 	//ExchangeList = append(ExchangeList, bittrex)
 	//ExchangeList = append(ExchangeList, poloniex)
 	//ExchangeList = append(ExchangeList, upbit)

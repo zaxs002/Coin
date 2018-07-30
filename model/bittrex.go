@@ -48,14 +48,25 @@ func (be BittrexExchange) GetTransfer(s string) {
 			buf.ReadFrom(resp.Body)
 			result := gjson.ParseBytes(buf.Bytes())
 			fee := result.Get("result.TxFee").Float()
-			cache.GetInstance().HSet(be.Name+"-transfer", v, fee)
+			IsActive := result.Get("result.IsActive").Bool()
+			MinConfirmation := result.Get("result.MinConfirmation").Float()
+
+			info := NewTransferInfo()
+			info.WithdrawFee = fee
+			info.WithdrawMinConfirmations = MinConfirmation
+			if IsActive {
+				info.CanWithdraw = 1
+			} else {
+				info.CanWithdraw = 0
+			}
+
+			be.SetTransferFee(v, info)
 		}
 	})
 }
 
 func (be *BittrexExchange) Run(symbol string) {
-	cache.GetInstance().HSet(be.Name+"-tradeFee", "taker", 0.0025)
-	cache.GetInstance().HSet(be.Name+"-tradeFee", "maker", 0.0025)
+	be.SetTradeFee(0.0025, 0.0025)
 
 	event.Bus.Subscribe(be.Name+":gettransfer", be.GetTransfer)
 
@@ -66,7 +77,8 @@ func (be *BittrexExchange) Run(symbol string) {
 			result.Get("result").ForEach(func(key, value gjson.Result) bool {
 				currency := value.Get("Currency").String()
 				currency = strings.ToLower(currency)
-				cache.GetInstance().HSet(be.Name+"-currency", currency, currency)
+
+				be.SetCurrency(currency)
 				return true
 			})
 		})
@@ -85,8 +97,10 @@ func (be *BittrexExchange) Run(symbol string) {
 				m := utils.GetBaseCoinByBittrex(MarketName)
 				base := m["base"]
 				coin := m["coin"]
-				cache.GetInstance().HSet(be.Name, coin+base, Last)
-				cache.GetInstance().HSet(be.Name+"-symbols", coin+base, coin+base)
+				s := coin + "-" + base
+
+				be.SetSymbol(s, s)
+				be.SetPrice(s, Last)
 				return true
 			})
 		})

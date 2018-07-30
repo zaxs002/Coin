@@ -4,7 +4,6 @@ import (
 	"BitCoin/utils"
 	"time"
 	"github.com/tidwall/gjson"
-	"BitCoin/cache"
 	"strings"
 	"strconv"
 	"BitCoin/event"
@@ -29,7 +28,8 @@ func (be BinanceExchange) GetPrice(s string) {
 				price := value.Get("c").Float()
 				s := value.Get("s").String()
 				s = strings.ToLower(s)
-				cache.GetInstance().HSet(be.Name, s, price)
+
+				be.SetPrice(s, price)
 				return true
 			})
 		})
@@ -41,8 +41,7 @@ func (be BinanceExchange) Run(symbol string) {
 
 	//获取currency和transfer
 	utils.StartTimer(time.Hour*1, func() {
-		cache.GetInstance().HSet(be.Name+"-tradeFee", "maker", 0.0005)
-		cache.GetInstance().HSet(be.Name+"-tradeFee", "taker", 0.0005)
+		be.SetTradeFee(0.0005, 0.0005)
 
 		transferUrl := "https://www.binance.com/assetWithdraw/getAllAsset.html"
 
@@ -52,11 +51,26 @@ func (be BinanceExchange) Run(symbol string) {
 			for k := range array {
 				i := strconv.Itoa(k)
 				name := result.Get(i + ".assetCode")
+				enableWithdraw := result.Get(i + ".enableWithdraw").Bool()
 				name2Lower := strings.ToLower(name.String())
 				fee := result.Get(i + ".transactionFee")
+
+				minProductWithdraw := result.Get(i + ".minProductWithdraw").Float()
+				confirmTimes := result.Get(i + ".confirmTimes").Float()
+
+				info := NewTransferInfo()
+				canWithdraw := 0.0
+				if enableWithdraw {
+					canWithdraw = 1
+				}
+				info.CanWithdraw = canWithdraw
+				info.WithdrawFee = fee.Float()
+				info.MinWithdraw = minProductWithdraw
+				info.WithdrawMinConfirmations = confirmTimes
+
 				be.TransferFees.Set(name2Lower, fee.Float())
-				cache.GetInstance().HSet(be.Name+"-transfer", name2Lower, fee.Float())
-				cache.GetInstance().HSet(be.Name+"-currency", name2Lower, name2Lower)
+				be.SetTransferFee(name2Lower, info)
+				be.SetCurrency(name2Lower)
 			}
 		})
 	})
@@ -64,10 +78,12 @@ func (be BinanceExchange) Run(symbol string) {
 	utils.StartTimer(time.Minute*30, func() {
 		utils.GetInfo("GET", "https://www.binance.com/exchange/public/product",
 			nil, func(result gjson.Result) {
-				symbols := result.Get("data.#.symbol")
-				symbols.ForEach(func(key, value gjson.Result) bool {
-					s := strings.ToLower(value.String())
-					cache.GetInstance().HSet(be.Name+"-symbols", s, s)
+				result.Get("data").ForEach(func(key, value gjson.Result) bool {
+					coin := value.Get("baseAsset").String()
+					base := value.Get("quoteAsset").String()
+					symbol := coin + "-" + base
+
+					be.SetSymbol(symbol, symbol)
 					return true
 				})
 			})

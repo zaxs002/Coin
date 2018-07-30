@@ -26,7 +26,6 @@ type BithumbMessage struct {
 	Id  string `json:"id"`
 }
 
-
 func (he BithumbExchange) CheckCoinExist(symbol string) bool {
 	return true
 }
@@ -132,9 +131,10 @@ func (he BithumbExchange) Run(symbol string) {
 		datas.ForEach(func(key, value gjson.Result) bool {
 			base := value.Get("base-currency").String()
 			quote := value.Get("quote-currency").String()
-			symbol := base + quote
+			symbol := base + "-" + quote
 			strings.ToUpper(symbol)
-			cache.GetInstance().HSet(he.Name+"-symbols", symbol, symbol)
+
+			he.SetSymbol(symbol, symbol)
 			return true
 		})
 		event.Bus.Publish(he.Name+":getprice", "")
@@ -156,8 +156,8 @@ func (he BithumbExchange) Run(symbol string) {
 				takerFee = value.Get("taker-fee").Float()
 				return false
 			})
-			cache.GetInstance().HSet(he.Name+"-tradeFee", "maker", makerFee)
-			cache.GetInstance().HSet(he.Name+"-tradeFee", "taker", takerFee)
+
+			he.SetTradeFee(makerFee, takerFee)
 		})
 	})
 	//获取转账手续费
@@ -205,7 +205,8 @@ func (he BithumbExchange) Run(symbol string) {
 				coinName := value.Get("name")
 				coins = append(coins, coinName.String())
 				s := coinName.String()
-				cache.GetInstance().HSet(he.Name+"-currency", s, s)
+
+				he.SetCurrency(s)
 				return true
 			})
 		}
@@ -233,19 +234,27 @@ func (he BithumbExchange) Run(symbol string) {
 
 				status := gjson.GetBytes(buf.Bytes(), "status")
 
+				info := NewTransferInfo()
+
 				if status.String() != "ok" {
 					he.TransferFees.Set(s, -1.0)
 					cache.GetInstance().HSet(he.Name+"-transfer", s, -1.0)
+
+					he.SetTransferFee(s, info)
 					break
 				}
 
 				datas := gjson.GetBytes(buf.Bytes(), "data")
 
-				fee := datas.Get("default-amount")
+				fee := datas.Get("default-amount").Float()
+				minAmount := datas.Get("min-amount").Float()
+				maxAmount := datas.Get("max-amount").Float()
 
-				cache.GetInstance().HSet(he.Name+"-transfer", s, fee.Float())
+				info.MinWithdraw = minAmount
+				info.MaxWithdraw = maxAmount
+				info.WithdrawFee = fee
 
-				he.TransferFees.Set(s, fee.Float())
+				he.SetTransferFee(s, info)
 				break
 			}
 		}

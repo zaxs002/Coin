@@ -14,6 +14,8 @@ import (
 	"crypto/md5"
 	"github.com/gorilla/websocket"
 	"github.com/PuerkitoBio/goquery"
+	"golang.org/x/net/proxy"
+	"os"
 )
 
 func StartTimer(duration time.Duration, f func()) {
@@ -85,7 +87,7 @@ func GetCoinByOkex(s string) string {
 	var myExp = MyRegexp{regexp.MustCompile(`^ok_sub_spot_(?P<coin>(\w+)*)_ticker`)}
 	m := myExp.FindStringSubmatchMap(s)
 	if s, ok := m["coin"]; ok {
-		return strings.Replace(s, "_", "", -1)
+		return strings.Replace(s, "_", "-", -1)
 	}
 	return ""
 }
@@ -101,6 +103,12 @@ func GetCoinBySymbol(symbol string) string {
 
 func GetCoinByZb(symbol string) map[string]string {
 	var myExp = MyRegexp{regexp.MustCompile(`^(?P<coin>(\w+)*)_(?P<base>(\w+)*)$`)}
+	m := myExp.FindStringSubmatchMap(symbol)
+	return m
+}
+
+func GetCoinByLbank(symbol string) map[string]string {
+	var myExp = MyRegexp{regexp.MustCompile(`^(?P<coin>(\w+)*)/(?P<base>(\w+)*)$`)}
 	m := myExp.FindStringSubmatchMap(symbol)
 	return m
 }
@@ -151,8 +159,44 @@ func GetBaseBySymbol(symbol string) string {
 	return ""
 }
 
+func GetBaseBySymbol2(symbol string) map[string]string {
+	var myExp = MyRegexp{regexp.MustCompile(`^(?P<coin>(\w+)*)(?P<base>(btc|eth|usdt))$`)}
+	m := myExp.FindStringSubmatchMap(symbol)
+	return m
+}
+
+func GetBaseByHuobi(symbol string) map[string]string {
+	var myExp = MyRegexp{regexp.MustCompile(`^(?P<coin>(\w+)*)(?P<base>(btc|eth|usdt|ht))$`)}
+	m := myExp.FindStringSubmatchMap(symbol)
+	return m
+}
+
+func GetSymbolByBitfinex(symbol string) map[string]string {
+	var myExp = MyRegexp{regexp.MustCompile(`^(?P<coin>(\w+)*)(?P<base>(btc|eth|usd|eos|jpy|eur))$`)}
+	m := myExp.FindStringSubmatchMap(symbol)
+	return m
+}
+
+func GetSymbolByBigOne(symbol string) map[string]string {
+	var myExp = MyRegexp{regexp.MustCompile(`^(?P<coin>(\w+)*)-(?P<base>(\w+)*)$`)}
+	m := myExp.FindStringSubmatchMap(symbol)
+	return m
+}
+
+func GetSymbolByCryptopia(symbol string) map[string]string {
+	var myExp = MyRegexp{regexp.MustCompile(`^(?P<coin>(\w+)*)/(?P<base>(\w+)*)$`)}
+	m := myExp.FindStringSubmatchMap(symbol)
+	return m
+}
+
 func GetBaseCoinByBittrex(symbol string) map[string]string {
 	var myExp = MyRegexp{regexp.MustCompile(`^(?P<base>(btc|eth|usdt|usd))-(?P<coin>(\w+)*)$`)}
+	m := myExp.FindStringSubmatchMap(symbol)
+	return m
+}
+
+func GetSymbolByFcoin(symbol string) map[string]string {
+	var myExp = MyRegexp{regexp.MustCompile(`^(?P<type>(ticker)).(?P<symbol>(\w+)*)$`)}
 	m := myExp.FindStringSubmatchMap(symbol)
 	return m
 }
@@ -173,16 +217,17 @@ var IsServer = config.IsServer
 func Fetch(method string, u string, header http.Header) (*http.Response, error) {
 	var client = &http.Client{}
 	if !IsServer {
-		uProxy, _ := url.Parse("http://127.0.0.1:1080")
-
-		client = &http.Client{
-			Transport: &http.Transport{
-				Proxy: http.ProxyURL(uProxy),
-			},
+		dialer, e := proxy.SOCKS5("tcp", "127.0.0.1:1080", nil, proxy.Direct)
+		if e != nil {
+			fmt.Println("请确认代理服务器开启", e)
+			os.Exit(1)
 		}
+		httpTransport := &http.Transport{}
+		client = &http.Client{Transport: httpTransport}
+		httpTransport.Dial = dialer.Dial
 	}
 
-	client.Timeout = time.Second * 10
+	client.Timeout = time.Second * 20
 
 	resp, _ := http.NewRequest(method, u, nil)
 
@@ -300,10 +345,14 @@ func GetInfoWS(u string, header http.Header, callback func(result gjson.Result))
 	dialer := websocket.Dialer{
 	}
 	if !IsServer {
-		uProxy, _ := url.Parse("http://127.0.0.1:1080")
+		d, e := proxy.SOCKS5("tcp", "127.0.0.1:1080", nil, proxy.Direct)
+		if e != nil {
+			fmt.Println("请确认代理服务器开启", e)
+			os.Exit(1)
+		}
 
 		dialer = websocket.Dialer{
-			Proxy: http.ProxyURL(uProxy),
+			NetDial: d.Dial,
 		}
 	}
 

@@ -5,9 +5,10 @@ import (
 	"time"
 	"github.com/PuerkitoBio/goquery"
 	"strings"
-	"BitCoin/cache"
 	"github.com/tidwall/gjson"
-	"BitCoin/event"
+		"strconv"
+	"sync"
+	"BitCoin/cache"
 	"github.com/gorilla/websocket"
 )
 
@@ -17,6 +18,8 @@ type GateIOMessage struct {
 	Params []string `json:"params"`
 }
 
+var gateGetPrice sync.Once
+var gateGetTransfer sync.Once
 //gateio
 type GateIOExchange struct {
 	Exchange
@@ -25,40 +28,41 @@ type GateIOExchange struct {
 func (ge GateIOExchange) CheckCoinExist(symbol string) bool {
 	return true
 }
-func (ge GateIOExchange) GetPrice(s string) {
-	all := cache.GetInstance().HGetAll(ge.Name + "-symbols")
-	result, _ := all.Result()
-	var symbols []string
-	for _, v := range result {
-		symbols = append(symbols, v)
-	}
-	utils.GetInfoWS2("wss://ws.gate.io/v3/", nil,
-		func(ws *websocket.Conn) {
-			ws.WriteJSON(GateIOMessage{
-				ID:     12312,
-				Method: "ticker.subscribe",
-				Params: symbols,
+func (ge GateIOExchange) GetPrice() {
+	gateGetPrice.Do(func() {
+		all := cache.GetInstance().HGetAll(ge.Name + "-symbols")
+		result, _ := all.Result()
+		var symbols []string
+		for _, v := range result {
+			symbols = append(symbols, v)
+		}
+		utils.GetInfoWS2("wss://ws.gate.io/v3/", nil,
+			func(ws *websocket.Conn) {
+				ws.WriteJSON(GateIOMessage{
+					ID:     12312,
+					Method: "ticker.subscribe",
+					Params: symbols,
+				})
+			},
+			func(result gjson.Result) {
+				symbol := result.Get("params.0").String()
+				last := result.Get("params.1.last").Float()
+				symbol = strings.ToLower(symbol)
+				m := utils.GetCoinByZb(symbol)
+				coin := m["coin"]
+				base := m["base"]
+				cache.GetInstance().HSet(ge.Name, coin+base, last)
 			})
-		},
-		func(result gjson.Result) {
-			symbol := result.Get("params.0").String()
-			last := result.Get("params.1.last").Float()
-			symbol = strings.ToLower(symbol)
-			m := utils.GetCoinByZb(symbol)
-			coin := m["coin"]
-			base := m["base"]
-			cache.GetInstance().HSet(ge.Name, coin+base, last)
-		})
+	})
 }
 
 func (ge *GateIOExchange) Run(symbol string) {
+	ge.SetTradeFee(0.002, 0.002)
 
-	cache.GetInstance().HSet(ge.Name+"-tradeFee", "taker", 0.002)
-	cache.GetInstance().HSet(ge.Name+"-tradeFee", "maker", 0.002)
-
-	event.Bus.Subscribe(ge.Name+"-getprice", ge.GetPrice)
 	//获取currency和转账费
 	utils.StartTimer(time.Minute*30, func() {
+		info := NewTransferInfo()
+		info.CanWithdraw = 1
 		utils.GetHtml("GET", "https://gateio.io/fee", nil, func(result *goquery.Document) {
 			trs := result.Find("#feelist > tbody > tr")
 			trs.Each(func(i int, selection *goquery.Selection) {
@@ -69,8 +73,10 @@ func (ge *GateIOExchange) Run(symbol string) {
 				m := utils.GetCoinByGateIO(transferFee)
 				if currency != "" {
 					n := m["fee"]
-					cache.GetInstance().HSet(ge.Name+"-currency", currency, currency)
-					cache.GetInstance().HSet(ge.Name+"-transfer", currency, n)
+					f, _ := strconv.ParseFloat(n, 64)
+					info.WithdrawFee = f
+					ge.SetTransferFee(currency, info)
+					ge.SetCurrency(currency)
 				}
 			})
 		})
@@ -86,12 +92,12 @@ func (ge *GateIOExchange) Run(symbol string) {
 				m := utils.GetCoinByZb(s)
 				base := m["base"]
 				coin := m["coin"]
-				cache.GetInstance().HSet(ge.Name+"-symbols", coin+base, value.String())
+				s = coin + "-" + base
+				ge.SetSymbol(s, value.String())
 				return true
 			})
 		})
-		event.Bus.Publish(ge.Name+"-getprice", "")
-		event.Bus.Unsubscribe(ge.Name+"-getprice", ge.GetPrice)
+		ge.GetPrice()
 	})
 
 }

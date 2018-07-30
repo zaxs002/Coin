@@ -1,18 +1,15 @@
 package model
 
 import (
-	"fmt"
 	"BitCoin/utils"
-	"net/url"
 	"net/http"
 	"time"
 	"github.com/tidwall/gjson"
-	"bytes"
 	"BitCoin/cache"
-	"strings"
-	"github.com/gorilla/websocket"
 	"BitCoin/event"
-	"encoding/json"
+	"sync"
+	"github.com/gorilla/websocket"
+	"strings"
 )
 
 type OkexMessage struct {
@@ -32,216 +29,158 @@ func (he OkexExchange) CheckCoinExist(symbol string) bool {
 	return true
 }
 
-func (he OkexExchange) GetPrice(s string) {
-	utils.StartTimer(time.Hour*24, func() {
-		//websocket
-		all := cache.GetInstance().HGetAll(he.Name + "-symbols")
-		result, _ := all.Result()
+var okexGetPrice sync.Once
+var okexGetTransfer sync.Once
+var okexGetTrade sync.Once
+var okexCheck sync.Once
 
-		apiKey := "c4eb13f2-b3d8-4446-9ddd-a48919e14a8e"
-		secretKey := "A8E98839AAA88020FAD749DE33566A89"
-		var m = map[string]interface{}{"api_key": apiKey}
-		sign := utils.BuildSign(m, secretKey)
+func (he OkexExchange) GetPrice() {
+	okexGetPrice.Do(func() {
+		utils.StartTimer(time.Hour*24, func() {
+			//websocket
+			all := cache.GetInstance().HGetAll(he.Name + "-symbols")
+			result, _ := all.Result()
 
-		var u = "wss://real.okex.com:10441/websocket"
-		dialer := websocket.Dialer{}
-		if !IsServer {
-			uProxy, _ := url.Parse("http://127.0.0.1:1080")
-			dialer = websocket.Dialer{
-				Proxy: http.ProxyURL(uProxy),
-			}
-		}
+			apiKey := "c4eb13f2-b3d8-4446-9ddd-a48919e14a8e"
+			secretKey := "A8E98839AAA88020FAD749DE33566A89"
+			var m = map[string]interface{}{"api_key": apiKey}
+			sign := utils.BuildSign(m, secretKey)
 
-		var ws *websocket.Conn
-		for {
-			var err error
-			ws, _, err = dialer.Dial(u, nil)
-			if err != nil {
-				fmt.Println(err)
-			} else {
-				break
-			}
-		}
-		defer ws.Close()
+			var u = "wss://real.okex.com:10441/websocket"
 
-		for _, v := range result {
-			channel := "ok_sub_spot_" + v + "_ticker"
-			ws.WriteJSON(OkexMessage{
-				Event:   "addChannel",
-				Channel: channel,
-				Parameters: map[string]interface{}{
-					"api_key": apiKey, "sign": sign,
-				},
-			})
-		}
-		utils.StartTimer(time.Second*30, func() {
-			ws.WriteJSON(OkexHeartBeat{
-				Event: "ping",
-			})
-		})
-		for {
-			_, m, err := ws.ReadMessage()
-
-			if err != nil {
-				for ; ; {
-					var err error
-					ws, _, err = dialer.Dial(u, nil)
-					if err != nil {
-						fmt.Println(err)
-					} else {
-						break
+			utils.GetInfoWS3(u, nil,
+				func(ws *websocket.Conn) {
+					for _, v := range result {
+						channel := "ok_sub_spot_" + v + "_ticker"
+						ws.WriteJSON(OkexMessage{
+							Event:   "addChannel",
+							Channel: channel,
+							Parameters: map[string]interface{}{
+								"api_key": apiKey, "sign": sign,
+							},
+						})
 					}
-				}
-			}
+					utils.StartTimer(time.Second*30, func() {
+						ws.WriteJSON(OkexHeartBeat{
+							Event: "ping",
+						})
+					})
+				},
+				func(ws *websocket.Conn, result gjson.Result) {
+					heartBeat := result.Get("event").String()
 
-			heartBeat := gjson.GetBytes(m, "event").String()
+					if heartBeat == "" {
+						channel := result.Get("0.channel")
 
-			if heartBeat == "" {
-				channel := gjson.GetBytes(m, "0.channel")
-
-				if channel.String() == "addChannel" {
-					//c := gjson.GetBytes(m, "0.data.channel")
-					//fmt.Printf("%s订阅成功\n", utils.GetCoinByOkex(c.String()))
-				} else {
-					bi := utils.GetCoinByOkex(channel.String())
-					last := gjson.GetBytes(m, "0.data.last").Float()
-					he.SetPrice(bi, last)
-					cache.GetInstance().HSet(he.Name, bi, last)
-				}
-			} else {
-			}
-		}
-		//websocket
+						if channel.String() == "addChannel" {
+							//c := result.Get("0.data.channel")
+							//fmt.Printf("%s订阅成功\n", utils.GetCoinByOkex(c.String()))
+						} else {
+							bi := utils.GetCoinByOkex(channel.String())
+							last := result.Get("0.data.last").Float()
+							he.SetPrice(bi, last)
+						}
+					} else {
+					}
+				})
+			//websocket
+		})
 	})
 }
 
 func (he OkexExchange) GetTransfer(token string) {
-	utils.StartTimer(time.Minute*30, func() {
-		all := cache.GetInstance().HGetAll(he.Name + "-currency")
-		result, _ := all.Result()
-		var client = &http.Client{}
-		if !IsServer {
-			uProxy, _ := url.Parse("http://127.0.0.1:1080")
+	okexGetTransfer.Do(func() {
+		utils.StartTimer(time.Minute*30, func() {
+			all := cache.GetInstance().HGetAll(he.Name + "-currency")
+			aa, _ := all.Result()
 
-			client = &http.Client{
-				Transport: &http.Transport{
-					Proxy: http.ProxyURL(uProxy),
-				},
-			}
-		}
-
-		client.Timeout = time.Second * 10
-
-		maxRequestCount := 5
-
-		for k, v := range result {
-			lower := strings.ToLower(v)
-			fee := cache.GetInstance().HGet(he.Name+"-transfer", lower)
-			f := fee.String()
-
-			result := utils.GetJsonFromRedisString(f)
-			o := result.Get("feeDefault")
-			he.TransferFees.Set(lower, o.Float())
-
-			url := "https://www.okex.com/v2/asset/withdraw?currencyId=" + k
-			req, _ := http.NewRequest("GET", url, nil)
-			req.Header = http.Header{
+			headers := http.Header{
 				"authorization": []string{token},
 			}
-			for i := maxRequestCount; i > 0; i-- {
-				resp, err := client.Do(req)
+			for k, v := range aa {
+				info := NewTransferInfo()
 
-				if err != nil {
-					continue
-				}
+				url := "https://www.okex.com/v2/asset/withdraw?currencyId=" + v
 
-				buf := bytes.NewBuffer(make([]byte, 0, 512))
+				utils.GetInfo("GET", url, headers, func(result gjson.Result) {
+					lower := strings.ToLower(k)
 
-				buf.ReadFrom(resp.Body)
-				resp.Body.Close()
+					feeDefault := result.Get("data.feeDefault").Float()
+					feeMax := result.Get("data.feeMax").Float()
+					feeMin := result.Get("data.feeMin").Float()
+					confirmNum := result.Get("data.confirmNum").Float()
+					singleMin := result.Get("data.singleMin").Float()
+					singleMax := result.Get("data.singleMax").Float()
+					canWithdrawAddress := result.Get("data.canWithdrawAddress").Bool()
 
-				feeDefault := gjson.GetBytes(buf.Bytes(), "data.feeDefault")
-				feeMax := gjson.GetBytes(buf.Bytes(), "data.feeMax")
-				feeMin := gjson.GetBytes(buf.Bytes(), "data.feeMin")
-				m := D{"feeMax": feeMax.Float(), "feeMin": feeMin.Float(), "feeDefault": feeDefault.Float()}
-				marshal, _ := json.Marshal(m)
-				cache.GetInstance().HSet(he.Name+"-transfer", lower, marshal)
-				he.TransferFees.Set(lower, feeDefault.Float())
-				break
+					info.MinWithdrawFee = feeMin
+					info.MaxWithdrawFee = feeMax
+					info.WithdrawFee = feeDefault
+					info.WithdrawMinConfirmations = confirmNum
+					info.MinWithdraw = singleMin
+					info.MaxWithdraw = singleMax
+					info.CanWithdraw = 0
+					if canWithdrawAddress {
+						info.CanWithdraw = 1
+					}
+
+					he.SetTransferFee(lower, info)
+				})
 			}
-		}
+
+		})
 	})
 }
 
 func (he OkexExchange) GetTrade(token string) {
-	utils.StartTimer(time.Minute*30, func() {
-		var client = &http.Client{}
-		if !IsServer {
-			uProxy, _ := url.Parse("http://127.0.0.1:1080")
-
-			client = &http.Client{
-				Transport: &http.Transport{
-					Proxy: http.ProxyURL(uProxy),
-				},
+	okexGetTrade.Do(func() {
+		utils.StartTimer(time.Minute*30, func() {
+			headers := http.Header{
+				"authorization": []string{token},
 			}
-		}
+			tradeFeeUrl := "https://www.okex.com/v2/spot/user-level"
 
-		client.Timeout = time.Second * 10
+			utils.GetInfo("GET", tradeFeeUrl, headers, func(result gjson.Result) {
+				takerFee := result.Get("data.takerFeeRatio").Float()
+				makerFee := result.Get("data.makerFeeRatio").Float()
 
-		tradeFeeUrl := "https://www.okex.com/v2/spot/user-level"
-		req, _ := http.NewRequest("GET", tradeFeeUrl, nil)
-		req.Header = http.Header{
-			"authorization": []string{token},
-		}
-		for {
-			resp, e := client.Do(req)
-			if e != nil {
-				continue
-			}
-			buf := bytes.NewBuffer(make([]byte, 0, 512))
-			buf.ReadFrom(resp.Body)
+				takerFee = takerFee / 100
+				makerFee = makerFee / 100
 
-			takerFee := gjson.GetBytes(buf.Bytes(), "data.takerFeeRatio").Float()
-			makerFee := gjson.GetBytes(buf.Bytes(), "data.makerFeeRatio").Float()
-
-			takerFee = takerFee / 100
-			makerFee = makerFee / 100
-
-			cache.GetInstance().HSet(he.Name+"-tradeFee", "taker", takerFee)
-			cache.GetInstance().HSet(he.Name+"-tradeFee", "maker", makerFee)
-		}
+				he.SetTradeFee(takerFee, makerFee)
+			})
+		})
 	})
 }
 
-func (he OkexExchange) check(s string) {
-	println("---------")
-	symbolLen := cache.GetInstance().HLen(he.Name + "-symbols").Val()
-	priceLen := cache.GetInstance().HLen(he.Name).Val()
-	currencyLen := cache.GetInstance().HLen(he.Name + "-currency").Val()
-	transferLen := cache.GetInstance().HLen(he.Name + "-transfer").Val()
+func (he OkexExchange) check() {
+	//okexCheck.Do(func() {
+		println("---------")
+		symbolLen := cache.GetInstance().HLen(he.Name + "-symbols").Val()
+		priceLen := cache.GetInstance().HLen(he.Name).Val()
+		currencyLen := cache.GetInstance().HLen(he.Name + "-currency").Val()
+		transferLen := cache.GetInstance().HLen(he.Name + "-transfer").Val()
 
-	if symbolLen == priceLen && symbolLen != 0 {
-		println(he.Name + " 价格全部获取完成")
-	}
+		if symbolLen == priceLen && symbolLen != 0 {
+			println(he.Name + " 价格全部获取完成")
+		}
 
-	if currencyLen == transferLen && transferLen != 0 {
-		println(he.Name + " 转账手续费获取完成")
-	}
-	if symbolLen == priceLen && currencyLen == transferLen && transferLen != 0 {
-		event.Bus.Unsubscribe(he.Name+":check", he.check)
-	}
+		if currencyLen == transferLen && transferLen != 0 {
+			println(he.Name + " 转账手续费获取完成")
+		}
+
+		if symbolLen == priceLen && currencyLen == transferLen && transferLen != 0 {
+			event.Bus.Unsubscribe(he.Name+":check", he.check)
+		}
+	//})
 }
+
 func (he *OkexExchange) Run(symbol string) {
 	coin := utils.GetCoinBySymbol(symbol)
 	base := utils.GetBaseBySymbol(symbol)
 	symbol = coin + "_" + base
 
-	token := "eyJhbGciOiJIUzUxMiJ9.eyJqdGkiOiJhZjc2NzgzNS0yMGFlLTQ0M2UtODg2NC03MjAyYTc1MDRiYTRNRHpNIiwidWlkIjoieFpRVzYxdnN6MFI5MmJ0TEw0RDZDUT09Iiwic3ViIjoiMTg1KioqNzgyNyIsImVtbCI6Ind1ZGlnb2QxM0AxNjMuY29tIiwic3RhIjowLCJtaWQiOjAsImlhdCI6MTUyOTY0MjQ5NywiZXhwIjoxNTMwMjQ3Mjk3LCJpc3MiOiJva2NvaW4ifQ.sE35xEl0K99KHz8S4XLHQFzf2b8PALnq3NVpWen1NYlIJCThkbFKkhMDwjxCL2ONngq_1v76vp9Wu5DSWAnZ5g"
-
-	event.Bus.Subscribe(he.Name+":getprice", he.GetPrice)
-	event.Bus.Subscribe(he.Name+":gettransfer", he.GetTransfer)
-	event.Bus.Subscribe(he.Name+":gettrade", he.GetTrade)
-	event.Bus.Subscribe(he.Name+":check", he.check)
+	token := "eyJhbGciOiJIUzUxMiJ9.eyJqdGkiOiIzMTg0NjZjMi01NzU2LTRlMzMtOTJmMS1iMjJiMWFmOGZhZmZad3NwIiwidWlkIjoiQkM4SHVXSlh0YnNwY3BqbmRxaVUyUT09Iiwic3ViIjoiMTg3KioqOTY3MiIsImVtbCI6Ind1ZGlnb2QxMkAxNjMuY29tIiwic3RhIjowLCJtaWQiOjAsImlhdCI6MTUzMjc0NjgzNywiZXhwIjoxNTMzMzUxNjM3LCJiaWQiOjAsImRvbSI6Ind3dy5va2V4LmNvbSIsImlzcyI6Im9rY29pbiJ9.79GAiqTO-dak2yud03dMMkrww_mUHdn9ERthEBM9fS47ddzssDovwfOZX4z714N-5XxX-hm3CtMH0aEo1JpBaQ"
 
 	//获取货币
 	utils.StartTimer(time.Minute*1, func() {
@@ -258,15 +197,13 @@ func (he *OkexExchange) Run(symbol string) {
 				id := currencyIdsArr[count]
 				currency := value.String()
 				count++
-				cache.GetInstance().HSet(he.Name+"-currency", id.String(), currency)
+				he.SetCurrency2(currency, id.String())
 				return true
 			})
 		})
 
-		event.Bus.Publish(he.Name+":gettransfer", token)
-		event.Bus.Publish(he.Name+":gettrade", token)
-		event.Bus.Unsubscribe(he.Name+":gettransfer", he.GetTransfer)
-		event.Bus.Unsubscribe(he.Name+":gettrade", he.GetTrade)
+		he.GetTransfer(token)
+		he.GetTrade(token)
 	})
 
 	utils.StartTimer(time.Minute*30, func() {
@@ -277,17 +214,19 @@ func (he *OkexExchange) Run(symbol string) {
 			symbols := result.Get("data.#.symbol")
 			symbols.ForEach(func(key, value gjson.Result) bool {
 				s := value.String()
-				cache.GetInstance().HSet(he.Name+"-symbols", s, s)
+				newSymbol := strings.Replace(s, "_", "-", -1)
+
+				he.SetSymbol(newSymbol, s)
+
 				return true
 			})
 		})
-		event.Bus.Publish(he.Name+":getprice", "")
-		event.Bus.Unsubscribe(he.Name+":getprice", he.GetPrice)
+		he.GetPrice()
 	})
 
 	//检测价格是否全部获取完成
 	utils.StartTimer(time.Second, func() {
-		event.Bus.Publish(he.Name+":check", "")
+		he.check()
 	})
 }
 

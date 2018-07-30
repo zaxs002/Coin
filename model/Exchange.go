@@ -11,8 +11,9 @@ import (
 	"strconv"
 	"reflect"
 	"net/url"
-	"BitCoin/cache"
 	"BitCoin/config"
+	"encoding/json"
+	"BitCoin/cache"
 )
 
 var IsServer = config.IsServer
@@ -64,6 +65,34 @@ type Exchange struct {
 	Sub          interface{}
 }
 
+type TransferFee struct {
+	WithdrawFee              interface{} //默认转账费
+	MaxWithdrawFee           interface{} //最大转账费
+	MinWithdrawFee           interface{} //最小转账费
+	MinWithdraw              interface{} //单笔最小转账数量
+	MaxWithdraw              interface{} //单笔最大转账数量
+	MaxDayWithdraw           interface{} //单日最大转账数量
+	CanWithdraw              interface{} //1可以 0不可以 -1未设置
+	WithdrawMinConfirmations interface{} //最小确认
+	CanDeposit               interface{} //1可以 0不可以 -1未设置
+	MinDeposit               interface{} //最小存款数量
+}
+
+func NewTransferInfo() TransferFee {
+	return TransferFee{
+		-1,
+		-1,
+		-1,
+		-1,
+		-1,
+		-1,
+		-1,
+		-1,
+		-1,
+		-1,
+	}
+}
+
 func (e Exchange) CallMethod(method string, params []interface{}) reflect.Value {
 	f := reflect.ValueOf(e.Sub).MethodByName(method)
 	if f.IsValid() {
@@ -107,9 +136,41 @@ func (e Exchange) GetLastPrice(symbol string) float64 {
 }
 
 func (e Exchange) SetPrice(symbol string, num float64) {
-	if num > 0 {
-		cache.GetInstance().HSet(e.Name, symbol, num)
+	cache.GetInstance().HSet(e.Name, symbol, num)
+}
+
+func (e Exchange) SetSymbol(symbol string, symbol2 string) {
+	cache.GetInstance().HSet(e.Name+"-symbols", symbol, symbol2)
+}
+
+func (e Exchange) SetCurrency(currency string) {
+	currency = strings.ToLower(currency)
+	cache.GetInstance().HSet(e.Name+"-currency", currency, currency)
+}
+
+func (e Exchange) SetCurrency2(currency string, currency2 string) {
+	currency = strings.ToLower(currency)
+	currency2 = strings.ToLower(currency2)
+	cache.GetInstance().HSet(e.Name+"-currency", currency, currency2)
+}
+
+func (e Exchange) SetTransferFee(currency string, transfer TransferFee) {
+	currency = strings.ToLower(currency)
+	m := make(map[string]interface{})
+	s := reflect.ValueOf(&transfer).Elem()
+	typ := s.Type()
+	for i := 0; i < s.NumField(); i++ {
+		f := s.Field(i)
+		name := typ.Field(i).Name
+		m[name] = f.Interface()
 	}
+	j, _ := json.Marshal(m)
+	cache.GetInstance().HSet(e.Name+"-transfer", currency, j)
+}
+
+func (e Exchange) SetTradeFee(taker float64, maker float64) {
+	cache.GetInstance().HSet(e.Name+"-tradeFee", "taker", taker)
+	cache.GetInstance().HSet(e.Name+"-tradeFee", "maker", maker)
 }
 
 func (e Exchange) GetAmount(symbol string) float64 {
@@ -141,7 +202,6 @@ func (e Exchange) GetTradeFee(symbol string, flag string) float64 {
 	return e.TradeFees.Get(symbol + "-" + flag).(float64)
 }
 
-
 func GetMinAmountExchange(symbol string) BigE {
 	minAmount := 10000000.0
 	var minAmountExchange BigE
@@ -167,99 +227,6 @@ func GetMaxAmountExchange(symbol string) BigE {
 	}
 	return maxAmountExchange
 }
-
-//KuCoin
-
-type KuCoinExchange struct {
-	Exchange
-}
-
-func (he KuCoinExchange) CheckCoinExist(symbol string) bool {
-	return true
-}
-
-func (he KuCoinExchange) Run(symbol string) {
-	oldSymbol := symbol
-	containBtc := strings.Contains(symbol, "btc")
-	coin := ""
-	if containBtc {
-		coins := strings.Split(symbol, "btc")
-		if len(coins) < 2 {
-			return
-		}
-		coin = coins[0]
-	}
-	symbol = strings.Replace(symbol, coin, coin+"-", -1)
-
-	var client = &http.Client{}
-	if !IsServer {
-		uProxy, _ := url.Parse("http://127.0.0.1:1080")
-
-		client = &http.Client{
-			Transport: &http.Transport{
-				Proxy: http.ProxyURL(uProxy),
-			},
-		}
-	}
-
-	client.Timeout = time.Second * 10
-
-	url := "https://api.kucoin.com/v1/open/tick"
-	url += "?"
-	url += "&symbol=" + symbol
-
-	resp, _ := http.NewRequest("GET", url, nil)
-
-	for {
-		resp, err := client.Do(resp)
-
-		//resp, err := http.Get(url)
-
-		if err != nil {
-			fmt.Println(err)
-			continue
-		}
-
-		buf := bytes.NewBuffer(make([]byte, 0, 512))
-
-		buf.ReadFrom(resp.Body)
-		resp.Body.Close()
-
-		result := gjson.GetBytes(buf.Bytes(), "data.buy")
-		//he.PriceQueue[symbol] = result.Float()
-		he.SetPrice(oldSymbol, result.Float())
-		time.Sleep(500 * time.Millisecond)
-	}
-}
-
-func (he KuCoinExchange) FeesRun() {
-	fmt.Println("Old FeesRun")
-}
-
-func NewKuCoinExchange() BigE {
-	exchange := new(KuCoinExchange)
-
-	exchange.Exchange = Exchange{
-		Name: "KuCoin",
-		PriceQueue: LockMap{
-			M: make(map[string]float64),
-		},
-		AmountDict: LockMap{
-			M: make(map[string]float64),
-		},
-		TradeFees: LockMap{
-			M: make(map[string]float64),
-		},
-		TransferFees: LockMap{
-			M: make(map[string]float64),
-		},
-		Sub: exchange,
-	}
-
-	var duitai BigE = exchange
-	return duitai
-}
-
 
 //poloniex
 
@@ -341,7 +308,6 @@ func NewPoloniexExchange() BigE {
 	var duitai BigE = exchange
 	return duitai
 }
-
 
 //upbit
 type UpbitExchange struct {
@@ -426,7 +392,6 @@ func NewUpbitExchange() BigE {
 	return duitai
 }
 
-
 //fatbtc
 type FatbtcExchange struct {
 	Exchange
@@ -507,7 +472,6 @@ func NewFatbtcExchange() BigE {
 	var duitai BigE = exchange
 	return duitai
 }
-
 
 //allcoin
 type AllcoinExchange struct {

@@ -11,6 +11,7 @@ import (
 	"BitCoin/event"
 )
 
+//TODO
 type HitbtcMessage struct {
 	Method string            `json:"method"`
 	Params map[string]string `json:"params"`
@@ -29,26 +30,33 @@ type HitbtcExchange struct {
 func (he HitbtcExchange) CheckCoinExist(symbol string) bool {
 	return true
 }
-func (he HitbtcExchange) GetPrice(s string) {
+func (he HitbtcExchange) GetPrice() {
 	all := cache.GetInstance().HGetAll(he.Name + "-symbols")
 	result, _ := all.Result()
+
+	o2n := make(map[string]string)
+
 	utils.GetInfoWS2("wss://api.hitbtc.com/api/2/ws", nil,
 		func(ws *websocket.Conn) {
-			for _, v := range result {
+			for k, v := range result {
 				ws.WriteJSON(HitbtcMessage{
 					Id:     strconv.Itoa(int(time.Now().Unix())),
 					Method: "subscribeTicker",
 					Params: map[string]string{"symbol": v},
 				})
+				o2n[v] = k
 			}
 		},
 		func(result gjson.Result) {
 			method := result.Get("method").String()
 			if method == "ticker" {
-				symbol := result.Get("params.symbol")
-				last := result.Get("params.last")
+				symbol := result.Get("params.symbol").String()
+				last := result.Get("params.last").Float()
 
-				cache.GetInstance().HSet(he.Name, symbol.String(), last.Float())
+				symbol = strings.ToLower(symbol)
+				newSymbol := o2n[symbol]
+
+				he.SetPrice(newSymbol, last)
 			}
 		})
 }
@@ -57,44 +65,7 @@ func (he HitbtcExchange) GetTransfer(s string) {
 
 }
 func (he *HitbtcExchange) Run(symbol string) {
-	//var client = &http.Client{}
-	//if !IsServer {
-	//	uProxy, _ := url.Parse("http://127.0.0.1:1080")
-	//
-	//	client = &http.Client{
-	//		Transport: &http.Transport{
-	//			Proxy: http.ProxyURL(uProxy),
-	//		},
-	//	}
-	//}
-	//
-	//client.Timeout = time.Second * 10
-	//
-	//url := "https://api.hitbtc.com/api/2/public/ticker/" + symbol
-	//
-	//resp, _ := http.NewRequest("GET", url, nil)
-	//
-	//for {
-	//	resp, err := client.Do(resp)
-	//
-	//	if err != nil {
-	//		fmt.Println(err)
-	//		continue
-	//	}
-	//
-	//	buf := bytes.NewBuffer(make([]byte, 0, 512))
-	//
-	//	buf.ReadFrom(resp.Body)
-	//	resp.Body.Close()
-	//
-	//	result := gjson.GetBytes(buf.Bytes(), "bid")
-	//	ue.SetPrice(symbol, result.Float())
-	//
-	//	time.Sleep(1 * time.Second)
-	//}
-
-	cache.GetInstance().HSet(he.Name+"-tradeFee", "taker", 0.001)
-	cache.GetInstance().HSet(he.Name+"-tradeFee", "maker", 0.001)
+	he.SetTradeFee(0.001, 0.001)
 
 	event.Bus.Subscribe(he.Name+"-getprice", he.GetPrice)
 	utils.StartTimer(time.Minute*30, func() {
@@ -103,27 +74,41 @@ func (he *HitbtcExchange) Run(symbol string) {
 		utils.GetInfo("GET", u, nil, func(result gjson.Result) {
 			result.ForEach(func(key, value gjson.Result) bool {
 				symbol := value.Get("id").String()
+				baseCurrency := value.Get("baseCurrency").String()
+				quoteCurrency := value.Get("quoteCurrency").String()
 				symbol = strings.ToLower(symbol)
 
-				cache.GetInstance().HSet(he.Name+"-symbols", symbol, symbol)
+				s := baseCurrency + "-" + quoteCurrency
+				s = strings.ToLower(s)
+
+				he.SetSymbol(s, symbol)
 				return true
 			})
 		})
-		event.Bus.Publish(he.Name+"-getprice", "")
-		event.Bus.Unsubscribe(he.Name+"-getprice", he.GetPrice)
+		he.GetPrice()
 	})
 
 	utils.StartTimer(time.Minute*30, func() {
+		info := NewTransferInfo()
 		//获取currency
 		u := "https://api.hitbtc.com/api/2/public/currency"
 		utils.GetInfo("GET", u, nil, func(result gjson.Result) {
 			result.ForEach(func(key, value gjson.Result) bool {
 				currency := value.Get("id").String()
 				fee := value.Get("payoutFee").Float()
+				canWithdraw := value.Get("payoutEnabled").Bool()
+				payinConfirmations := value.Get("payinConfirmations").Float()
 				currency = strings.ToLower(currency)
 
-				cache.GetInstance().HSet(he.Name+"-currency", currency, currency)
-				cache.GetInstance().HSet(he.Name+"-transfer", currency, fee)
+				info.WithdrawFee = fee
+				info.CanWithdraw = 0
+				if canWithdraw {
+					info.CanWithdraw = 1
+				}
+				info.WithdrawMinConfirmations = payinConfirmations
+
+				he.SetCurrency(currency)
+				he.SetTransferFee(currency, info)
 				return true
 			})
 		})

@@ -46,7 +46,7 @@ func (ge ExxExchange) GetPrice(s string) {
 						Channel:  k + "_" + v + "_kline_1min",
 						Event:    "addChannel",
 						IsZip:    "false",
-						LastTime: "1530708540000",
+						//LastTime: "1530708540000",
 					})
 				}
 			},
@@ -55,6 +55,7 @@ func (ge ExxExchange) GetPrice(s string) {
 				m := utils.GetCoinByExx(channel)
 				symbol := m["coin"]
 				last := result.Get("datas.data.0.4").Float()
+				ge.SetPrice(symbol, last)
 				cache.GetInstance().HSet(ge.Name, symbol, last)
 			})
 	})

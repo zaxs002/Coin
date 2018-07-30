@@ -4,9 +4,9 @@ import (
 	"BitCoin/utils"
 	"time"
 	"github.com/tidwall/gjson"
-	"BitCoin/cache"
 	"strings"
 	"github.com/PuerkitoBio/goquery"
+	"strconv"
 )
 
 type BiboxMessage struct {
@@ -27,8 +27,7 @@ func (he BiboxExchange) GetPrice(s string) {
 }
 
 func (he *BiboxExchange) Run(symbol string) {
-	cache.GetInstance().HSet(he.Name+"-tradeFee", "taker", 0.0005)
-	cache.GetInstance().HSet(he.Name+"-tradeFee", "maker", 0.0005)
+	he.SetTradeFee(0.0005, 0.0005)
 
 	//获取价格
 	utils.StartTimer(time.Second, func() {
@@ -39,9 +38,9 @@ func (he *BiboxExchange) Run(symbol string) {
 				base := value.Get("currency_symbol").String()
 				last := value.Get("last").Float()
 
-				symbol := coin + base
+				symbol := coin + "-" + base
 				symbol = strings.ToLower(symbol)
-				cache.GetInstance().HSet(he.Name, symbol, last)
+				he.SetPrice(symbol, last)
 				return true
 			})
 		})
@@ -56,13 +55,12 @@ func (he *BiboxExchange) Run(symbol string) {
 				m := utils.GetCoinByZb(symbol)
 				coin := m["coin"]
 				base := m["base"]
-				newSymbol := coin + base
+				newSymbol := coin + "-" + base
 				newSymbol = strings.ToLower(newSymbol)
-				cache.GetInstance().HSet(he.Name+"-symbols", newSymbol, symbol)
+				he.SetSymbol(newSymbol, symbol)
 				return true
 			})
 		})
-
 	})
 
 	//获取currency和转账费
@@ -78,8 +76,11 @@ func (he *BiboxExchange) Run(symbol string) {
 				m := utils.GetFloatByBitfinex(fee)
 				num := m["num"]
 				if num != "" {
-					cache.GetInstance().HSet(he.Name+"-currency", currency, currency)
-					cache.GetInstance().HSet(he.Name+"-transfer", currency, num)
+					info := NewTransferInfo()
+					f, _ := strconv.ParseFloat(num, 64)
+					info.WithdrawFee = f
+					he.SetTransferFee(currency, info)
+					he.SetCurrency(currency)
 				}
 			})
 		})

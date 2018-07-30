@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="PublishConfigData" serverName="Tokyo">
+  <component name="PublishConfigData" serverName="Russia">
     <serverData>
-      <paths name="Tokyo">
+      <paths name="Russia">
         <serverdata>
           <mappings>
-            <mapping deploy="/root/work/src/BitCoin" local="$PROJECT_DIR$" web="/" />
+            <mapping deploy="/go/src/BitCoin" local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>
