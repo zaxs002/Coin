@@ -22,10 +22,13 @@ type LockMap struct {
 	sync.RWMutex
 	M map[string]float64
 }
+type LockMapString struct {
+	sync.RWMutex
+	M map[string]string
+}
 
 func (lm *LockMap) Get(k string) interface{} {
 	lm.RLock()
-	//f := lm.M[k]
 	if f, ok := lm.M[k]; ok {
 		lm.RUnlock()
 		return f
@@ -36,6 +39,22 @@ func (lm *LockMap) Get(k string) interface{} {
 }
 
 func (lm *LockMap) Set(k string, v float64) {
+	lm.Lock()
+	lm.M[k] = v
+	lm.Unlock()
+}
+func (lm *LockMapString) Get(k string) interface{} {
+	lm.RLock()
+	if f, ok := lm.M[k]; ok {
+		lm.RUnlock()
+		return f
+	} else {
+		lm.RUnlock()
+		return ""
+	}
+}
+
+func (lm *LockMapString) Set(k string, v string) {
 	lm.Lock()
 	lm.M[k] = v
 	lm.Unlock()
@@ -53,6 +72,7 @@ type BigE interface {
 	CheckCoinExist(symbol string) bool
 	GetTransferFee(coin string) float64
 	GetTradeFee(symbol string, flag string) float64
+	GetPrices() map[string]float64
 }
 
 type Exchange struct {
@@ -61,8 +81,10 @@ type Exchange struct {
 	ValidSymbols []string
 	Name         string
 	TradeFees    LockMap
-	TransferFees LockMap
+	TransferFees LockMapString
 	Sub          interface{}
+
+	TSDoOnce sync.Once
 }
 
 type TransferFee struct {
@@ -115,7 +137,7 @@ func (e Exchange) CreateRun(symbol string) {
 	b := e.CallMethod("CheckCoinExist", []interface{}{symbol}).Bool()
 	if b {
 		//go e.Run(symbol)
-		go e.CallMethod("Run", []interface{}{symbol})
+		e.CallMethod("Run", []interface{}{symbol})
 		//go e.CallMethod("FeesRun", []interface{}{})
 	} else {
 		e.SetPrice(symbol, -1)
@@ -130,13 +152,36 @@ func (e Exchange) FeesRun() {
 	fmt.Println("Old FeesRun")
 }
 
+func (e Exchange) check(flag string) {
+	symbolLen := cache.GetInstance().HLen(e.Name + "-symbols").Val()
+	priceLen := cache.GetInstance().HLen(e.Name).Val()
+	currencyLen := cache.GetInstance().HLen(e.Name + "-currency").Val()
+	transferLen := cache.GetInstance().HLen(e.Name + "-transfer").Val()
+
+	if symbolLen == priceLen && symbolLen != 0 {
+	}
+
+	if currencyLen == transferLen && transferLen != 0 {
+	}
+
+	if symbolLen == priceLen && currencyLen == transferLen && transferLen != 0 {
+		cache.GetInstance().HSet("Flag", e.Name, 1)
+		println(e.Name + "全部获取完成")
+	}
+}
+
 func (e Exchange) GetLastPrice(symbol string) float64 {
 	r, _ := cache.GetInstance().HGet(e.Name, symbol).Float64()
 	return r
 }
 
+func (e Exchange) GetPrices() map[string]float64 {
+	return e.PriceQueue.M
+}
+
 func (e Exchange) SetPrice(symbol string, num float64) {
 	cache.GetInstance().HSet(e.Name, symbol, num)
+	//e.PriceQueue.Set(symbol, num)
 }
 
 func (e Exchange) SetSymbol(symbol string, symbol2 string) {
@@ -226,170 +271,6 @@ func GetMaxAmountExchange(symbol string) BigE {
 		}
 	}
 	return maxAmountExchange
-}
-
-//poloniex
-
-type PoloniexExchange struct {
-	Exchange
-}
-
-func (he PoloniexExchange) CheckCoinExist(symbol string) bool {
-	return true
-}
-
-func (he *PoloniexExchange) Run(symbol string) {
-	oldSymbol := symbol
-	containBtc := strings.Contains(symbol, "btc")
-	coin := ""
-	if containBtc {
-		coins := strings.Split(symbol, "btc")
-		if len(coins) < 2 {
-			return
-		}
-		coin = coins[0]
-	}
-	symbol = "btc_" + coin
-	symbol = strings.ToUpper(symbol)
-
-	var client = &http.Client{}
-	if !IsServer {
-		uProxy, _ := url.Parse("http://127.0.0.1:1080")
-
-		client = &http.Client{
-			Transport: &http.Transport{
-				Proxy: http.ProxyURL(uProxy),
-			},
-		}
-	}
-
-	client.Timeout = time.Second * 10
-
-	url := "https://poloniex.com/public?command=returnTicker"
-
-	resp, _ := http.NewRequest("GET", url, nil)
-
-	for {
-		resp, err := client.Do(resp)
-
-		if err != nil {
-			fmt.Println(err)
-			continue
-		}
-
-		buf := bytes.NewBuffer(make([]byte, 0, 512))
-
-		buf.ReadFrom(resp.Body)
-		resp.Body.Close()
-
-		result := gjson.GetBytes(buf.Bytes(), symbol+".last")
-		he.SetPrice(oldSymbol, result.Float())
-
-		time.Sleep(1 * time.Second)
-	}
-}
-
-func (he *PoloniexExchange) FeesRun() {
-	fmt.Println("Old FeesRun")
-}
-
-func NewPoloniexExchange() BigE {
-	exchange := new(PoloniexExchange)
-	exchange.Exchange = Exchange{
-		Name: "Poloniex",
-		PriceQueue: LockMap{
-			M: make(map[string]float64),
-		},
-		AmountDict: LockMap{
-			M: make(map[string]float64),
-		},
-		Sub: exchange,
-	}
-	var duitai BigE = exchange
-	return duitai
-}
-
-//upbit
-type UpbitExchange struct {
-	Exchange
-}
-
-func (ue UpbitExchange) CheckCoinExist(symbol string) bool {
-	return true
-}
-
-func (ue *UpbitExchange) Run(symbol string) {
-	oldSymbol := symbol
-	containBtc := strings.Contains(symbol, "btc")
-	coin := ""
-	if containBtc {
-		coins := strings.Split(symbol, "btc")
-		if len(coins) < 2 {
-			return
-		}
-		coin = coins[0]
-	}
-	symbol = "btc-" + coin
-	symbol = strings.ToUpper(symbol)
-
-	var client = &http.Client{}
-	if !IsServer {
-		uProxy, _ := url.Parse("http://127.0.0.1:1080")
-
-		client = &http.Client{
-			Transport: &http.Transport{
-				Proxy: http.ProxyURL(uProxy),
-			},
-		}
-	}
-
-	client.Timeout = time.Second * 10
-
-	url := "https://crix-api-cdn.upbit.com/v1/crix/trades/ticks" +
-		"?" +
-		"code=CRIX.UPBIT." + symbol +
-		"&count=1"
-
-	resp, _ := http.NewRequest("GET", url, nil)
-
-	for {
-		resp, err := client.Do(resp)
-
-		if err != nil {
-			fmt.Println(err)
-			continue
-		}
-
-		buf := bytes.NewBuffer(make([]byte, 0, 512))
-
-		buf.ReadFrom(resp.Body)
-		resp.Body.Close()
-
-		result := gjson.GetBytes(buf.Bytes(), "0.tradePrice")
-		ue.SetPrice(oldSymbol, result.Float())
-
-		time.Sleep(1 * time.Second)
-	}
-}
-
-func (he UpbitExchange) FeesRun() {
-	fmt.Println("Old FeesRun")
-}
-
-func NewUpbitExchange() BigE {
-	exchange := new(UpbitExchange)
-	exchange.Exchange = Exchange{
-		Name: "Upbit",
-		PriceQueue: LockMap{
-			M: make(map[string]float64),
-		},
-		AmountDict: LockMap{
-			M: make(map[string]float64),
-		},
-		Sub: exchange,
-	}
-	var duitai BigE = exchange
-	return duitai
 }
 
 //fatbtc

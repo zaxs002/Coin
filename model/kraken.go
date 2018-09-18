@@ -5,43 +5,42 @@ import (
 	"BitCoin/utils"
 	"github.com/gorilla/websocket"
 	"github.com/tidwall/gjson"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
 )
 
-type OkexMessage struct {
+type KrakenMessage struct {
 	Event      string                 `json:"event"`
 	Channel    string                 `json:"channel"`
 	Parameters map[string]interface{} `json:"parameters"`
 }
 
-type OkexHeartBeat struct {
+type KrakenHeartBeat struct {
 	Event string `json:"event"`
 }
-type OkexExchange struct {
+type KrakenExchange struct {
 	Exchange
 }
 
-func (he OkexExchange) CheckCoinExist(symbol string) bool {
+func (he KrakenExchange) CheckCoinExist(symbol string) bool {
 	return true
 }
 
-var okexGetPrice sync.Once
-var okexGetTransfer sync.Once
-var okexGetTrade sync.Once
-var okexCheck sync.Once
+var krakenGetPrice sync.Once
+var krakenGetTransfer sync.Once
+var krakenGetTrade sync.Once
+var krakenCheck sync.Once
 
-func (he OkexExchange) GetPrice() {
+func (he KrakenExchange) GetPrice() {
 	okexGetPrice.Do(func() {
 		utils.StartTimer(time.Hour*24, func() {
 			//websocket
 			all := cache.GetInstance().HGetAll(he.Name + "-symbols")
 			result, _ := all.Result()
 
-			apiKey := "606ff446-0ba1-4753-9dcd-c56d0953fbe3"
-			secretKey := "A91BC888BBB94E7F57D5C1CE6F0D88DC"
+			apiKey := "c4eb13f2-b3d8-4446-9ddd-a48919e14a8e"
+			secretKey := "A8E98839AAA88020FAD749DE33566A89"
 			var m = map[string]interface{}{"api_key": apiKey}
 			sign := utils.BuildSign(m, secretKey)
 
@@ -87,21 +86,18 @@ func (he OkexExchange) GetPrice() {
 	})
 }
 
-func (he OkexExchange) GetTransfer(token string) {
+func (he KrakenExchange) GetTransfer() {
 	okexGetTransfer.Do(func() {
 		utils.StartTimer(time.Minute*30, func() {
 			all := cache.GetInstance().HGetAll(he.Name + "-currency")
 			aa, _ := all.Result()
 
-			headers := http.Header{
-				"authorization": []string{token},
-			}
 			for k, v := range aa {
 				info := NewTransferInfo()
 
 				url := "https://www.okex.com/v2/asset/withdraw?currencyId=" + v
 
-				utils.GetInfo("GET", url, headers, func(result gjson.Result) {
+				utils.GetInfo("GET", url, nil, func(result gjson.Result) {
 					lower := strings.ToLower(k)
 
 					feeDefault := result.Get("data.feeDefault").Float()
@@ -131,15 +127,12 @@ func (he OkexExchange) GetTransfer(token string) {
 	})
 }
 
-func (he OkexExchange) GetTrade(token string) {
+func (he KrakenExchange) GetTrade() {
 	okexGetTrade.Do(func() {
 		utils.StartTimer(time.Minute*30, func() {
-			headers := http.Header{
-				"authorization": []string{token},
-			}
 			tradeFeeUrl := "https://www.okex.com/v2/spot/user-level"
 
-			utils.GetInfo("GET", tradeFeeUrl, headers, func(result gjson.Result) {
+			utils.GetInfo("GET", tradeFeeUrl, nil, func(result gjson.Result) {
 				takerFee := result.Get("data.takerFeeRatio").Float()
 				makerFee := result.Get("data.makerFeeRatio").Float()
 
@@ -152,55 +145,35 @@ func (he OkexExchange) GetTrade(token string) {
 	})
 }
 
-func (he *OkexExchange) Run(symbol string) {
-	cache.GetInstance().HDel("Flag", he.Name)
-
-	coin := utils.GetCoinBySymbol(symbol)
-	base := utils.GetBaseBySymbol(symbol)
-	symbol = coin + "_" + base
-
-	token := "eyJhbGciOiJIUzUxMiJ9.eyJqdGkiOiJleDExMDE1MzY5ODQxODYyMDczREY1REQzNTMzQUY2RDc4eEtsYyIsInVpZCI6ImlTbU1YbzEwUXpiQW5kckZLNWtGaVE9PSIsInN0YSI6MCwibWlkIjowLCJpYXQiOjE1MzcyMzk3NzgsImV4cCI6MTUzNzg0NDU3OCwiYmlkIjowLCJkb20iOiJ3d3cub2tleC5jb20iLCJpc3MiOiJva2NvaW4ifQ.cAL9dlKgk9t7xxwYTCUre32C_9YY_y4hPXC0QVs1NRf7riUIT3eav4qAH9BFZQk9DpuNrL4rtxIRVfg8uWjHeQ"
-
+func (he KrakenExchange) Run(symbol string) {
 	//获取货币
-	utils.StartTimer(time.Minute*1, func() {
-		h := http.Header{
-			"authorization": []string{token},
-		}
-		utils.GetInfo("GET", "https://www.okex.com/v2/asset/accounts/currencies", h, func(result gjson.Result) {
-			currencies := result.Get("data.#.currency")
-			currencyIds := result.Get("data.#.currencyId")
-			currencyIdsArr := currencyIds.Array()
-
-			count := 0
-			currencies.ForEach(func(key, value gjson.Result) bool {
-				id := currencyIdsArr[count]
-				currency := value.String()
-				count++
-				he.SetCurrency2(currency, id.String())
-				return true
-			})
-		})
-
-		he.GetTransfer(token)
-		he.GetTrade(token)
-	})
-
 	utils.StartTimer(time.Minute*30, func() {
-		h := http.Header{
-			"authorization": []string{token},
-		}
-		utils.GetInfo("GET", "https://www.okex.com/v2/spot/new-collect", h, func(result gjson.Result) {
-			symbols := result.Get("data.#.symbol")
-			symbols.ForEach(func(key, value gjson.Result) bool {
-				s := value.String()
-				newSymbol := strings.Replace(s, "_", "-", -1)
+		utils.GetInfo("GET", "https://api.kraken.com/0/public/AssetPairs", nil, func(result gjson.Result) {
+			pairs := result.Get("result")
 
-				he.SetSymbol(newSymbol, s)
+			pairs.ForEach(func(key, value gjson.Result) bool {
+				base := value.Get("base").String()
+				quote := value.Get("quote").String()
+				symbol := quote + "-" + base
+				he.SetSymbol(symbol, symbol)
 
+				taker := value.Get("fees.1.1").Float()
+				maker := value.Get("fees_maker.1.1").Float()
+				he.SetTradeFee(taker, maker)
 				return true
 			})
 		})
 		he.GetPrice()
+	})
+
+	utils.StartTimer(time.Minute*30, func() {
+		utils.GetInfo("GET", "https://api.kraken.com/0/public/Assets", nil, func(result gjson.Result) {
+			result.Get("result").ForEach(func(key, value gjson.Result) bool {
+				alt := value.Get("altname").String()
+				he.SetCurrency(alt)
+				return true
+			})
+		})
 	})
 
 	//检测价格是否全部获取完成
@@ -209,11 +182,11 @@ func (he *OkexExchange) Run(symbol string) {
 	})
 }
 
-func (he OkexExchange) FeesRun() {
+func (he KrakenExchange) FeesRun() {
 }
 
-func NewOkexExchange() BigE {
-	exchange := new(OkexExchange)
+func NewKrakenExchange() BigE {
+	exchange := new(KrakenExchange)
 	exchange.Exchange = Exchange{
 		Name: "Okex",
 		PriceQueue: LockMap{

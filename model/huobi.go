@@ -2,20 +2,20 @@ package model
 
 import (
 	"BitCoin/cache"
-	"bytes"
-	"github.com/tidwall/gjson"
 	"BitCoin/utils"
-	"time"
+	"bytes"
+	"compress/gzip"
+	"encoding/binary"
+	"fmt"
+	"github.com/gorilla/websocket"
+	"github.com/tidwall/gjson"
+	"io/ioutil"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
-	"regexp"
-	"github.com/gorilla/websocket"
-	"fmt"
-	"encoding/binary"
-	"compress/gzip"
-	"io/ioutil"
+	"time"
 )
 
 type HuoBiExchange struct {
@@ -112,7 +112,7 @@ func (he HuoBiExchange) GetPrice() {
 					status := gjson.GetBytes(datas, "status")
 					if status.String() == "ok" {
 						subbed := gjson.GetBytes(datas, "subbed")
-						var myExp = utils.MyRegexp{regexp.MustCompile(`^market.(?P<coin>(\w+)*)`)}
+						var myExp = utils.MyRegexp{Regexp: regexp.MustCompile(`^market.(?P<coin>(\w+)*)`)}
 						m := myExp.FindStringSubmatchMap(subbed.String())
 						if _, ok := m["coin"]; ok {
 							//fmt.Println("订阅成功", s)
@@ -229,10 +229,11 @@ func NewHuoBiExchange() BigE {
 		TradeFees: LockMap{
 			M: make(map[string]float64),
 		},
-		TransferFees: LockMap{
-			M: make(map[string]float64),
+		TransferFees: LockMapString{
+			M: make(map[string]string),
 		},
-		Sub: exchange,
+		Sub:      exchange,
+		TSDoOnce: sync.Once{},
 	}
 
 	var duitai BigE = exchange

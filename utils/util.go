@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"encoding/gob"
 	"time"
 	"regexp"
 	"github.com/tidwall/gjson"
@@ -16,6 +17,7 @@ import (
 	"github.com/PuerkitoBio/goquery"
 	"golang.org/x/net/proxy"
 	"os"
+	"BitCoin/cache"
 )
 
 func StartTimer(duration time.Duration, f func()) {
@@ -27,6 +29,22 @@ func StartTimer(duration time.Duration, f func()) {
 			//next = time.Date(next.Year(), next.Month(), next.Day(), 0, 0, 0, 0, next.Location())
 			t := time.NewTimer(next.Sub(now))
 			<-t.C
+		}
+	}()
+}
+
+func StartTimerWithFlag(duration time.Duration, flag string, f func()) {
+	go func() {
+		i := int64(0)
+		for i == 0 {
+			f()
+			now := time.Now()
+			next := now.Add(duration)
+			//next = time.Date(next.Year(), next.Month(), next.Day(), 0, 0, 0, 0, next.Location())
+			t := time.NewTimer(next.Sub(now))
+			<-t.C
+			r := cache.GetInstance().HGet("Flag", flag)
+			i, _ = r.Int64()
 		}
 	}()
 }
@@ -135,6 +153,16 @@ func GetFloatByBitfinex(symbol string) map[string]string {
 	m := myExp.FindStringSubmatchMap(symbol)
 	return m
 }
+func GetFeeByBithumb(symbol string) map[string]string {
+	var myExp = MyRegexp{regexp.MustCompile(`(?P<num>(\d+(\.\d+)?)) %`)}
+	m := myExp.FindStringSubmatchMap(symbol)
+	return m
+}
+func GetCoinByBithumb(symbol string) map[string]string {
+	var myExp = MyRegexp{regexp.MustCompile(`\((?P<num>(\w+)*)\)`)}
+	m := myExp.FindStringSubmatchMap(symbol)
+	return m
+}
 func GetByZb(s string) map[string]string {
 	var myExp = MyRegexp{regexp.MustCompile(`(?P<num>(\d+(\.\d+)?)) ?(?P<coin>[a-zA-Z]+)`)}
 	m := myExp.FindStringSubmatchMap(s)
@@ -152,6 +180,14 @@ func GetByZb(s string) map[string]string {
 
 func GetBaseBySymbol(symbol string) string {
 	var myExp = MyRegexp{regexp.MustCompile(`^(?P<coin>(\w+)*)(?P<base>(btc|eth|usdt))$`)}
+	m := myExp.FindStringSubmatchMap(symbol)
+	if s, ok := m["base"]; ok {
+		return s
+	}
+	return ""
+}
+func GetJsByCoinegg(symbol string) string {
+	var myExp = MyRegexp{regexp.MustCompile(`CDATA\[(?P<coin>(\w+)*)//\]\]>`)}
 	m := myExp.FindStringSubmatchMap(symbol)
 	if s, ok := m["base"]; ok {
 		return s
@@ -179,6 +215,11 @@ func GetSymbolByBitfinex(symbol string) map[string]string {
 
 func GetSymbolByBigOne(symbol string) map[string]string {
 	var myExp = MyRegexp{regexp.MustCompile(`^(?P<coin>(\w+)*)-(?P<base>(\w+)*)$`)}
+	m := myExp.FindStringSubmatchMap(symbol)
+	return m
+}
+func GetSymbolByOtcbtc(symbol string) map[string]string {
+	var myExp = MyRegexp{regexp.MustCompile(`^(?P<coin>(\w+)*)_(?P<base>(\w+)*)$`)}
 	m := myExp.FindStringSubmatchMap(symbol)
 	return m
 }
@@ -495,4 +536,12 @@ func GetInfoWS3(u string, header http.Header, callback func(*websocket.Conn),
 		callback2(ws, gjson.ParseBytes(m))
 	}
 	ws.Close()
+}
+
+func DeepCopy(dst, src interface{}) error {
+	var buf bytes.Buffer
+	if err := gob.NewEncoder(&buf).Encode(src); err != nil {
+		return err
+	}
+	return gob.NewDecoder(bytes.NewBuffer(buf.Bytes())).Decode(dst)
 }

@@ -148,8 +148,8 @@ func NewFcoinExchange() BigE {
 		TradeFees: LockMap{
 			M: make(map[string]float64),
 		},
-		TransferFees: LockMap{
-			M: make(map[string]float64),
+		TransferFees: LockMapString{
+			M: make(map[string]string),
 		},
 		Sub: exchange,
 	}

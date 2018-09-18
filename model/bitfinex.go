@@ -91,35 +91,36 @@ func (he BitfinexExchange) GetTransfer() {
 		utils.StartTimer(time.Minute*30, func() {
 			u := "https://www.bitfinex.com/fees"
 
-			resp, _ := utils.Fetch("GET", u, nil)
-			doc, _ := goquery.NewDocumentFromReader(resp.Body)
-			doc.Find("#fees-page > div > table:nth-child(16) > tbody >tr").Each(func(i int, selection *goquery.Selection) {
-				key := selection.Find("span").Text()
-				key = strings.Replace(key, " ", "", -1)
-				short := cache.GetInstance().HGet("FullToShort", key).Val()
-				if short == "" {
-					short = cache.GetInstance().HGet("FullToShort", key).Val()
-				}
-				val := selection.Find("td.bfx-green-text.col-info").Text()
-				val = strings.TrimSpace(val)
-				bitfinex := utils.GetFloatByBitfinex(val)
-				info := NewTransferInfo()
-				if len(bitfinex) == 0 {
-					info.WithdrawFee = 0
-					info.CanWithdraw = 1
-					if short != "" {
+			utils.GetHtml("GET", u, nil, func(result *goquery.Document) {
+				result.Find("#fees-page > div > table:nth-child(16) > tbody >tr").Each(func(i int, selection *goquery.Selection) {
+					key := selection.Find("span").Text()
+					key = strings.Replace(key, " ", "", -1)
+					key = strings.ToLower(key)
+					short := cache.GetInstance().HGet("FullToShort", key).Val()
+					if short == "" {
+						short = cache.GetInstance().HGet("FullToShort", key).Val()
+					}
+					val := selection.Find("td.bfx-green-text.col-info").Text()
+					val = strings.TrimSpace(val)
+					bitfinex := utils.GetFloatByBitfinex(val)
+					info := NewTransferInfo()
+					if len(bitfinex) == 0 {
+						info.WithdrawFee = 0
+						info.CanWithdraw = 1
+						if short != "" {
+							he.SetTransferFee(short, info)
+						}
+					} else {
+						coin := bitfinex["coin"]
+						num := bitfinex["num"]
+						n, _ := strconv.ParseFloat(num, 64)
+						coin = strings.ToLower(coin)
+
+						info.WithdrawFee = n
+						info.CanWithdraw = 1
 						he.SetTransferFee(short, info)
 					}
-				} else {
-					coin := bitfinex["coin"]
-					num := bitfinex["num"]
-					n, _ := strconv.ParseFloat(num, 64)
-					coin = strings.ToLower(coin)
-
-					info.WithdrawFee = n
-					info.CanWithdraw = 1
-					he.SetTransferFee(short, info)
-				}
+				})
 			})
 		})
 	})
@@ -164,12 +165,19 @@ func (he BitfinexExchange) Run(symbol string) {
 				val := value.String()
 				k := key.String()
 				val = strings.Replace(val, " ", "", -1)
+				val = strings.ToLower(val)
+				k = strings.ToLower(k)
 				cache.GetInstance().HSet("FullToShort", val, k)
 				return true
 			})
 		})
 
 		he.GetTransfer()
+	})
+
+	//检测价格是否全部获取完成
+	utils.StartTimerWithFlag(time.Second, he.Name, func() {
+		he.check(he.Name)
 	})
 }
 

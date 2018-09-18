@@ -6,7 +6,8 @@ import (
 	"github.com/tidwall/gjson"
 	"strings"
 	"strconv"
-	"BitCoin/event"
+	"sync"
+	"BitCoin/cache"
 )
 
 type BinanceExchange struct {
@@ -17,32 +18,43 @@ func (be BinanceExchange) CheckCoinExist(symbol string) bool {
 	return true
 }
 
-func (be BinanceExchange) GetPrice(s string) {
-	var u = "wss://stream.binance.com:9443/stream?streams=!miniTicker@arr@1000ms"
-	//var u = "wss://stream.binance.com:9443/ws/%s@aggTrade"
-	//var u = "wss://stream.binance.com:9443/ws/!ticker@arr"
-	utils.StartTimer(time.Hour*24, func() {
-		utils.GetInfoWS(u, nil, func(result gjson.Result) {
-			coins := result.Get("data")
-			coins.ForEach(func(key, value gjson.Result) bool {
-				price := value.Get("c").Float()
-				s := value.Get("s").String()
-				s = strings.ToLower(s)
+var binanceGetPrice sync.Once
 
-				be.SetPrice(s, price)
-				return true
+func (be BinanceExchange) GetPrice() {
+	binanceGetPrice.Do(func() {
+		all := cache.GetInstance().HGetAll(be.Name + "-symbols")
+		r, _ := all.Result()
+
+		o2n := make(map[string]string)
+
+		for k, v := range r {
+			o2n[v] = k
+		}
+
+		var u = "wss://stream.binance.com:9443/stream?streams=!miniTicker@arr@1000ms"
+		utils.StartTimer(time.Hour*24, func() {
+			utils.GetInfoWS(u, nil, func(result gjson.Result) {
+				coins := result.Get("data")
+				coins.ForEach(func(key, value gjson.Result) bool {
+					price := value.Get("c").Float()
+					s := value.Get("s").String()
+					s = strings.ToLower(s)
+
+					k := o2n[s]
+
+					be.SetPrice(k, price)
+					return true
+				})
 			})
 		})
 	})
 }
 
 func (be BinanceExchange) Run(symbol string) {
-	event.Bus.Subscribe(be.Name+":getprice", be.GetPrice)
+	be.SetTradeFee(0.0005, 0.0005)
 
 	//获取currency和transfer
 	utils.StartTimer(time.Hour*1, func() {
-		be.SetTradeFee(0.0005, 0.0005)
-
 		transferUrl := "https://www.binance.com/assetWithdraw/getAllAsset.html"
 
 		utils.GetInfo("GET", transferUrl, nil, func(result gjson.Result) {
@@ -68,7 +80,6 @@ func (be BinanceExchange) Run(symbol string) {
 				info.MinWithdraw = minProductWithdraw
 				info.WithdrawMinConfirmations = confirmTimes
 
-				be.TransferFees.Set(name2Lower, fee.Float())
 				be.SetTransferFee(name2Lower, info)
 				be.SetCurrency(name2Lower)
 			}
@@ -82,15 +93,22 @@ func (be BinanceExchange) Run(symbol string) {
 					coin := value.Get("baseAsset").String()
 					base := value.Get("quoteAsset").String()
 					symbol := coin + "-" + base
+					s := coin + base
 
-					be.SetSymbol(symbol, symbol)
+					symbol = strings.ToLower(symbol)
+					s = strings.ToLower(s)
+
+					be.SetSymbol(symbol, s)
 					return true
 				})
 			})
-		event.Bus.Publish(be.Name+":getprice", "")
-		event.Bus.Unsubscribe(be.Name+":getprice", be.GetPrice)
+		be.GetPrice()
 	})
 
+	//检测价格是否全部获取完成
+	utils.StartTimerWithFlag(time.Second, be.Name, func() {
+		be.check(be.Name)
+	})
 }
 
 func (be BinanceExchange) FeesRun() {
@@ -109,10 +127,11 @@ func NewBinanceExchange() BigE {
 		TradeFees: LockMap{
 			M: make(map[string]float64),
 		},
-		TransferFees: LockMap{
-			M: make(map[string]float64),
+		TransferFees: LockMapString{
+			M: make(map[string]string),
 		},
-		Sub: exchange,
+		Sub:      exchange,
+		TSDoOnce: sync.Once{},
 	}
 
 	var duitai BigE = exchange

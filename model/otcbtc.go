@@ -1,14 +1,14 @@
 package model
 
 import (
-	"BitCoin/utils"
-	"strings"
 	"BitCoin/cache"
-	"github.com/tidwall/gjson"
-	"time"
+	"BitCoin/utils"
 	"github.com/PuerkitoBio/goquery"
 	"github.com/gorilla/websocket"
+	"github.com/tidwall/gjson"
+	"strings"
 	"sync"
+	"time"
 )
 
 type OtcBtcMessage struct {
@@ -74,8 +74,11 @@ func (ge *OtcBtcExchange) Run(symbol string) {
 			result.ForEach(func(key, value gjson.Result) bool {
 				s := value.Get("id").String()
 				tickerId := value.Get("ticker_id").String()
-
-				ge.SetSymbol(tickerId, s)
+				m := utils.GetSymbolByOtcbtc(tickerId)
+				coin := m["coin"]
+				base := m["base"]
+				symbol := coin + "-" + base
+				ge.SetSymbol(symbol, s)
 				return true
 			})
 		})

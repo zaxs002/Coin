@@ -10,10 +10,10 @@ import (
 type D map[string]interface{}
 
 func HandleIndex(c *gin.Context) {
-
+	//c.String(http.StatusOK, "Hello")
 	c.JSON(http.StatusOK, D{
-		"exchanges": model.GetExchangesJson(),
-		"users":     model.GetUsersJson(),
+		"exchanges": model.GetExchangesJson2(),
+		//"users":     model.GetUsersJson(),
 	})
 
 	//c.JSON(http.StatusOK, gin.H{

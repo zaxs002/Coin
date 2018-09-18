@@ -1,12 +1,9 @@
 package model
 
 import (
-	"fmt"
-	"github.com/tidwall/gjson"
-	"net/http"
-	"bytes"
-	"time"
+					"time"
 	"BitCoin/utils"
+	"BitCoin/cache"
 )
 
 //var SymbolList = []string{
@@ -107,6 +104,7 @@ import (
 //	"daybtc", "daxtbtc", "fotabtc",
 //	"sethbtc",
 //}
+
 var SymbolList = []string{
 	"dashbtc", "etcbtc",
 	"eosbtc", "omgbtc", "ethbtc",
@@ -137,80 +135,74 @@ func init() {
 	//	return true
 	//})
 
-	//huobi := NewHuoBiExchange()
-	//binance := NewBinanceExchange()
-	//okex := NewOkexExchange()
-	//bitfinex := NewBitfinexExchange()
+	huobi := NewHuoBiExchange()
+	binance := NewBinanceExchange()
+	okex := NewOkexExchange()
+	bitfinex := NewBitfinexExchange()
 	//bittrex := NewBittrexExchange()
-	//hitbtc := NewHitbtcExchange()
+	hitbtc := NewHitbtcExchange()
 	zb := NewZbExchange()
-	//gate := NewGateIOExchange()
-	//otcbtc := NewOtcBtcExchange()
-	//bibox := NewBiboxExchange()
-	//hadax := NewHadaxExchange()
-	//bithumb := NewBithumbExchange()
-	//coinbene := NewCoinbeneExchange()
+	gate := NewGateIOExchange()
+	otcbtc := NewOtcBtcExchange()
+	bibox := NewBiboxExchange()
+	hadax := NewHadaxExchange()
+	bithumb := NewBithumbExchange()
+	coinbene := NewCoinbeneExchange()
+	fcoin := NewFcoinExchange()
+	//coinegg := NewCoineggExchange()
+	kucoin := NewKuCoinExchange()
+	bigone := NewBigOneExchange()
+	cryptopia := NewCryptopiaExchange()
+	lbank := NewLBankExchange()
+	poloniex := NewPoloniexExchange()
+	upbit := NewUpbitExchange()
+	kraken := NewKrakenExchange()
+	//fatbtc := NewFatbtcExchange()
+	//allcoin := NewAllcoinExchange()
+	//quoine := NewQuoineExchange()
 
 	//有问题
 	//bcex := NewBcexExchange()
 	//bitz := NewBitzExchange()
 	//exx := NewExxExchange()
 
-	//fcoin := NewFcoinExchange()
-	//coinegg := NewCoineggExchange()
-	//kucoin := NewKuCoinExchange()
-	//bigone := NewBigOneExchange()
-
-	//cryptopia := NewCryptopiaExchange()
-
-
-
-	//lbank := NewLBankExchange()
-	//bittrex := NewBittrexExchange()
-	//poloniex := NewPoloniexExchange()
-	//upbit := NewUpbitExchange()
-	//fatbtc := NewFatbtcExchange()
-	//allcoin := NewAllcoinExchange()
-	//quoine := NewQuoineExchange()
-
-	//ExchangeList = append(ExchangeList, huobi)
-	//ExchangeList = append(ExchangeList, binance)
-	//ExchangeList = append(ExchangeList, okex)
-	//ExchangeList = append(ExchangeList, bitfinex)
+	ExchangeList = append(ExchangeList, huobi)
+	ExchangeList = append(ExchangeList, binance)
+	ExchangeList = append(ExchangeList, okex)
+	ExchangeList = append(ExchangeList, bitfinex)
 	//ExchangeList = append(ExchangeList, bittrex)
-	//ExchangeList = append(ExchangeList, hitbtc)
+	ExchangeList = append(ExchangeList, hitbtc)
 	ExchangeList = append(ExchangeList, zb)
-	//ExchangeList = append(ExchangeList, gate)
-	//ExchangeList = append(ExchangeList, otcbtc)
-	//ExchangeList = append(ExchangeList, exx)
-	//ExchangeList = append(ExchangeList, bibox)
-	//ExchangeList = append(ExchangeList, hadax)
-	//ExchangeList = append(ExchangeList, bithumb)
-	//ExchangeList = append(ExchangeList, coinbene)
-	//ExchangeList = append(ExchangeList, bcex)
-	//ExchangeList = append(ExchangeList, bitz)
-	//ExchangeList = append(ExchangeList, fcoin)
+	ExchangeList = append(ExchangeList, gate)
+	ExchangeList = append(ExchangeList, otcbtc)
+	ExchangeList = append(ExchangeList, bibox)
+	ExchangeList = append(ExchangeList, hadax)
+	ExchangeList = append(ExchangeList, bithumb)
+	ExchangeList = append(ExchangeList, coinbene)
+	ExchangeList = append(ExchangeList, fcoin)
 	//ExchangeList = append(ExchangeList, coinegg)
-	//ExchangeList = append(ExchangeList, kucoin)
-	//ExchangeList = append(ExchangeList, bigone)
-
-	//ExchangeList = append(ExchangeList, cryptopia)
-	//ExchangeList = append(ExchangeList, lbank)
-
-	//ExchangeList = append(ExchangeList, bittrex)
-	//ExchangeList = append(ExchangeList, poloniex)
-	//ExchangeList = append(ExchangeList, upbit)
+	ExchangeList = append(ExchangeList, kucoin)
+	ExchangeList = append(ExchangeList, bigone)
+	ExchangeList = append(ExchangeList, cryptopia)
+	ExchangeList = append(ExchangeList, lbank)
+	ExchangeList = append(ExchangeList, poloniex)
+	ExchangeList = append(ExchangeList, upbit)
+	ExchangeList = append(ExchangeList, kraken)
 	//ExchangeList = append(ExchangeList, fatbtc)
 	//ExchangeList = append(ExchangeList, allcoin)
 	//ExchangeList = append(ExchangeList, quoine)
 
-	for i := 0; i < 10; i++ {
-		user := User{
-			Name:       fmt.Sprintf("Test%d", i),
-			AmountDict: make(map[string]float64),
-		}
-		UserList = append(UserList, user)
-	}
+	//ExchangeList = append(ExchangeList, exx)
+	//ExchangeList = append(ExchangeList, bcex)
+	//ExchangeList = append(ExchangeList, bitz)
+
+	//for i := 0; i < 10; i++ {
+	//	user := User{
+	//		Name:       fmt.Sprintf("Test%d", i),
+	//		AmountDict: make(map[string]float64),
+	//	}
+	//	UserList = append(UserList, user)
+	//}
 
 	for _, e := range ExchangeList {
 		e.CreateRun("")
@@ -262,6 +254,57 @@ func GetExchangesJson() []D {
 	return exchangesList
 }
 
+var exchangesList []D
+
+func init() {
+	utils.StartTimer(time.Millisecond*500, func() {
+		var es []D
+		for _, e := range ExchangeList {
+			priceMap, _ := cache.GetInstance().HGetAll(e.GetName()).Result()
+			transferMap, _ := cache.GetInstance().HGetAll(e.GetName() + "-transfer").Result()
+			currencyMap, _ := cache.GetInstance().HGetAll(e.GetName() + "-currency").Result()
+			tradeFeeMap, _ := cache.GetInstance().HGetAll(e.GetName() + "-tradeFee").Result()
+			
+			var exchange = D{
+				"exchange": D{
+					"name":     e.GetName(),
+					"symbols":  priceMap,
+					"currency": currencyMap,
+					"transfer": transferMap,
+					"tradeFee": tradeFeeMap,
+				},
+			}
+			es = append(es, exchange)
+		}
+		exchangesList = es
+	})
+}
+
+func GetExchangesJson2() []D {
+	//var exchangesList []D
+
+	//for _, e := range ExchangeList {
+	//	//prices := e.GetPrices()
+	//	priceMap, _ := cache.GetInstance().HGetAll(e.GetName()).Result()
+	//	transferMap, _ := cache.GetInstance().HGetAll(e.GetName() + "-transfer").Result()
+	//	tradeFeeMap, _ := cache.GetInstance().HGetAll(e.GetName() + "-tradeFee").Result()
+	//	//for k, v := range priceMap {
+	//	//	fmt.Println(k, v)
+	//	//}
+	//	var exchange = D{
+	//		"exchange": D{
+	//			"name":     e.GetName(),
+	//			//"symbols":  prices,
+	//			"symbols":  priceMap,
+	//			"transfer": transferMap,
+	//			"tradeFee": tradeFeeMap,
+	//		},
+	//	}
+	//	exchangesList = append(exchangesList, exchange)
+	//}
+	return exchangesList
+}
+
 func GetUsersJson() []D {
 	var usersList []D
 
@@ -282,31 +325,4 @@ func GetUsersJson() []D {
 		usersList = append(usersList, exchange)
 	}
 	return usersList
-}
-
-func getSymbols() gjson.Result {
-	//uProxy, _ := url.Parse("http://183.51.191.251:9797")
-	client := &http.Client{
-		//Transport: &http.Transport{
-		//	Proxy: http.ProxyURL(uProxy),
-		//},
-	}
-	client.Timeout = time.Second * 20
-
-	u := "https://api.hitbtc.com/api/2/public/symbol"
-	resp := &http.Response{}
-	err := error(nil)
-	for {
-		resp, err = client.Get(u)
-
-		if err != nil {
-			fmt.Println(err)
-		}
-	}
-	buf := bytes.NewBuffer(make([]byte, 0, 512))
-
-	buf.ReadFrom(resp.Body)
-	results := gjson.GetBytes(buf.Bytes(), "#[quoteCurrency==\"BTC\"]#.id")
-
-	return results
 }

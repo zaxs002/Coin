@@ -2,16 +2,20 @@ package model
 
 import (
 	"BitCoin/cache"
-	"github.com/tidwall/gjson"
 	"BitCoin/utils"
-	"time"
-	"sync"
-	"github.com/gorilla/websocket"
-	"net/http"
+	"bytes"
 	"fmt"
 	"github.com/PuerkitoBio/goquery"
-	"strings"
+	"github.com/gorilla/websocket"
+	"github.com/robertkrimen/otto"
+	"github.com/tidwall/gjson"
+	"golang.org/x/net/proxy"
+	"net/http"
+	"os"
 	"strconv"
+	"strings"
+	"sync"
+	"time"
 )
 
 var CoineggOnce sync.Once
@@ -86,12 +90,26 @@ func (he CoineggExchange) Run(symbol string) {
 	he.SetTradeFee(0.001, 0.001)
 
 	//获取symbols和价格
+	h := http.Header{
+		"user-agent":                []string{"Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/63.0.3239.132 Safari/537.36"},
+		"referer":                   []string{"https://www.coinegg.com/"},
+		"accept":                    []string{"text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8"},
+		"accept-encoding":           []string{"gzip, deflate, br"},
+		"accept-language":           []string{"zh-CN,zh;q=0.9,en;q=0.8,ru;q=0.7"},
+		"upgrade-insecure-requests": []string{"1"},
+	}
+
+	he.HackCloudflare(h)
+
+	he.GetCoinEggCookies(h)
+
 	utils.StartTimer(time.Second, func() {
 		url := "https://www.coinegg.com/coin/%s/allcoin"
+
 		for _, v := range bases {
 			baseUrl := fmt.Sprintf(url, v)
 
-			utils.GetInfo("GET", baseUrl, nil, func(result gjson.Result) {
+			utils.GetInfo("GET", baseUrl, h, func(result gjson.Result) {
 				result.ForEach(func(key, value gjson.Result) bool {
 					s := key.String()
 					last := value.Get("1").Float()
@@ -131,6 +149,95 @@ func (he CoineggExchange) Run(symbol string) {
 	})
 }
 
+func (he CoineggExchange) HackCloudflare(h http.Header) string {
+	var client = &http.Client{}
+	if !IsServer {
+		dialer, e := proxy.SOCKS5("tcp", "127.0.0.1:1080", nil, proxy.Direct)
+		if e != nil {
+			fmt.Println("请确认代理服务器开启", e)
+			os.Exit(1)
+		}
+		httpTransport := &http.Transport{}
+		client = &http.Client{Transport: httpTransport}
+		httpTransport.Dial = dialer.Dial
+	}
+	client.Timeout = time.Second * 20
+	resp, _ := http.NewRequest("GET", "https://www.coinegg.com", nil)
+	resp.Header = h
+	response, _ := client.Do(resp)
+	cookies := response.Cookies()
+	c := cookies[0].Name + "=" + cookies[0].Value
+	h.Add("cookie", c)
+
+	buf := bytes.NewBuffer(make([]byte, 0, 512))
+	buf.ReadFrom(response.Body)
+
+	s := string(buf.Bytes())
+
+	to2 := strings.Split(s, "setTimeout(function(){")
+	to1 := strings.Split(to2[1], "}, 4000);")
+	jsCode := to1[0]
+	jsCode = strings.Replace(jsCode,
+		"t.substr(r.length); t = t.substr(0,t.length-1);",
+		"\"www.coinegg.com\"", -1)
+	jsCode = strings.Replace(jsCode,
+		"t = document.createElement('div');",
+		"", -1)
+	jsCode = strings.Replace(jsCode,
+		`t.innerHTML="<a href='/'>x</a>";`,
+		"", -1)
+	jsCode = strings.Replace(jsCode,
+		`t = t.firstChild.href;r = t.match(/https?:\/\//)[0];`,
+		"", -1)
+	jsCode = strings.Replace(jsCode,
+		`t = t.substr(r.length); t = t.substr(0,t.length-1);`,
+		"", -1)
+	jsCode = strings.Replace(jsCode,
+		`a = document.getElementById('jschl-answer');`,
+		"", -1)
+	jsCode = strings.Replace(jsCode,
+		`f = document.getElementById('challenge-form');`,
+		"", -1)
+	jsCode = strings.Replace(jsCode,
+		`f.action += location.hash;`,
+		"", -1)
+	jsCode = strings.Replace(jsCode,
+		`f.submit();`,
+		"", -1)
+	jsCode = strings.Replace(jsCode,
+		`a.value =`,
+		"a =", -1)
+	vm := otto.New()
+	vm.Run(jsCode)
+	value, _ := vm.Get("a")
+
+	jschl_vc := strings.Split(s, `<input type="hidden" name="jschl_vc" value="`)[1]
+	jschl_vc = strings.Split(jschl_vc, `"/>`)[0]
+
+	pass := strings.Split(s, `<input type="hidden" name="pass" value="`)[1]
+	pass = strings.Split(pass, `"/>`)[0]
+
+	u := "https://www.coinegg.com/cdn-cgi/l/chk_jschl?"
+	u += "jschl_vc=" + jschl_vc
+	u += "&pass=" + pass
+	u += "&jschl_answer=" + value.String()
+	resp, _ = http.NewRequest("GET", u, nil)
+	resp.Header = h
+
+	println(u)
+	fmt.Println(h)
+
+	time.Sleep(4 * time.Second)
+	response, _ = client.Do(resp)
+	fmt.Println(response.Cookies())
+
+	return ""
+}
+func (he CoineggExchange) GetCoinEggCookies(headers http.Header) {
+	//u := "https://www.coinegg.com/cdn-cgi/l/chk_jschl"
+
+}
+
 func NewCoineggExchange() BigE {
 	exchange := new(CoineggExchange)
 
@@ -145,8 +252,8 @@ func NewCoineggExchange() BigE {
 		TradeFees: LockMap{
 			M: make(map[string]float64),
 		},
-		TransferFees: LockMap{
-			M: make(map[string]float64),
+		TransferFees: LockMapString{
+			M: make(map[string]string),
 		},
 		Sub: exchange,
 	}

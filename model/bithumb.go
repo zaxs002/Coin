@@ -1,29 +1,22 @@
 package model
 
 import (
-	"BitCoin/cache"
-	"github.com/gorilla/websocket"
-	"fmt"
-	"bytes"
-	"encoding/binary"
-	"compress/gzip"
-	"io/ioutil"
-	"github.com/tidwall/gjson"
 	"BitCoin/utils"
-	"regexp"
-	"time"
-	"net/http"
-	"net/url"
-	"BitCoin/event"
+	"fmt"
+	"github.com/PuerkitoBio/goquery"
+	"github.com/gorilla/websocket"
+	"github.com/tidwall/gjson"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 type BithumbExchange struct {
 	Exchange
 }
 type BithumbMessage struct {
-	Sub string `json:"sub"`
-	Id  string `json:"id"`
+	Currency string `json:"currency"`
 }
 
 func (he BithumbExchange) CheckCoinExist(symbol string) bool {
@@ -33,230 +26,109 @@ func (he BithumbExchange) CheckCoinExist(symbol string) bool {
 func (he BithumbExchange) FeesRun() {
 }
 
-func (he BithumbExchange) GetPrice(s string) {
-	symbolss := cache.GetInstance().HGetAll(he.Name + "-symbols")
-	var symbols, _ = symbolss.Result()
-	utils.StartTimer(time.Hour*24, func() {
-		var u = "wss://api.huobi.pro/ws"
-		dialer := websocket.Dialer{}
-		if !IsServer {
-			uProxy, _ := url.Parse("http://127.0.0.1:1080")
-			dialer = websocket.Dialer{
-				Proxy: http.ProxyURL(uProxy),
-			}
-		}
+var bithumbOnce sync.Once
 
-		var ws *websocket.Conn
-		for {
-			var err error
-			ws, _, err = dialer.Dial(u, nil)
-			if err != nil {
-				fmt.Println(err)
-			} else {
-				break
-			}
-		}
-		defer ws.Close()
-
-		for _, v := range symbols {
-			ws.WriteJSON(HuoBiMessage{
-				Sub: "market." + v + ".kline.1min",
-				Id:  "id1",
-			})
-		}
-		b := new(bytes.Buffer)
-
-		for {
-			_, m, err := ws.ReadMessage()
-
-			if err != nil {
-				for ; ; {
-					var err error
-					ws, _, err = dialer.Dial(u, nil)
-					if err != nil {
-						fmt.Println(err)
-					} else {
-						break
+func (he BithumbExchange) GetPrice() {
+	bithumbOnce.Do(func() {
+		utils.StartTimer(time.Hour*24, func() {
+			var u = "wss://wss.bithumb.com/public"
+			utils.GetInfoWS2(u, nil,
+				func(ws *websocket.Conn) {
+					ws.WriteJSON(BithumbMessage{
+						Currency: "BTC",
+					})
+				}, func(result gjson.Result) {
+					if result.Get("header").Get("service").String() == "ticker" {
+						result.Get("data").ForEach(func(key, value gjson.Result) bool {
+							fmt.Println(value)
+							return true
+						})
 					}
-				}
-			}
-
-			if string(m) == "" {
-				continue
-			}
-
-			binary.Write(b, binary.LittleEndian, m)
-			r, _ := gzip.NewReader(b)
-			datas, _ := ioutil.ReadAll(r)
-			r.Close()
-
-			result := gjson.GetBytes(datas, "ping")
-			tick := gjson.GetBytes(datas, "tick")
-
-			if result.Int() > 0 {
-				ws.WriteJSON(HuoBiPong{
-					Pong: result.Int(),
 				})
-			} else {
-				status := gjson.GetBytes(datas, "status")
-				if status.String() == "ok" {
-					subbed := gjson.GetBytes(datas, "subbed")
-					var myExp = utils.MyRegexp{regexp.MustCompile(`^market.(?P<coin>(\w+)*)`)}
-					m := myExp.FindStringSubmatchMap(subbed.String())
-					if _, ok := m["coin"]; ok {
-						//fmt.Println("订阅成功", s)
-					}
-				} else {
-					if tick.String() != "" {
-						symbol := gjson.GetBytes(datas, "ch")
-						bi := utils.GetCoinByHuoBi(symbol.String())
-						tick := tick.Get("close").Float()
-						he.SetPrice(bi, tick)
-					}
-				}
-			}
-		}
+		})
 	})
 }
 
 func (he BithumbExchange) Run(symbol string) {
-	event.Bus.Subscribe(he.Name+":getprice", he.GetPrice)
-
 	//获取symbols
 	utils.StartTimer(time.Minute*30, func() {
-		symbolsUrl := "https://www.huobipro.com/-/x/pro/v1/settings/symbols?language=zh-cn"
+		symbolsUrl := "https://api.bithumb.com/public/ticker/ALL"
 
-		result := utils.FetchJson("GET", symbolsUrl, nil)
-		datas := result.Get("data")
-		datas.ForEach(func(key, value gjson.Result) bool {
-			base := value.Get("base-currency").String()
-			quote := value.Get("quote-currency").String()
-			symbol := base + "-" + quote
-			strings.ToUpper(symbol)
-
-			he.SetSymbol(symbol, symbol)
-			return true
+		utils.GetInfo("GET", symbolsUrl, nil, func(result gjson.Result) {
+			if result.Get("status").String() == "0000" {
+				btcBuy := 0.0
+				btcSell := 0.0
+				ethBuy := 0.0
+				ethSell := 0.0
+				result.Get("data").ForEach(func(key, value gjson.Result) bool {
+					currency := key.String()
+					currency = strings.ToLower(currency)
+					buyPrice := value.Get("buy_price").Float()
+					sellPrice := value.Get("sell_price").Float()
+					he.SetCurrency(currency)
+					if currency == "btc" {
+						btcBuy = buyPrice
+						btcSell = sellPrice
+					} else if currency == "eth" {
+						ethBuy = buyPrice
+						ethSell = sellPrice
+						he.SetPrice("eth-btc", ethBuy/btcBuy)
+					} else if currency == "date" {
+						return false
+					} else {
+						btcSymbol := currency + "-btc"
+						ethSymbol := currency + "-eth"
+						btcPrice := buyPrice / btcBuy
+						ethPrice := buyPrice / ethBuy
+						he.SetSymbol(btcSymbol, btcSymbol)
+						he.SetSymbol(ethSymbol, ethSymbol)
+						he.SetPrice(btcSymbol, btcPrice)
+						he.SetPrice(ethSymbol, ethPrice)
+					}
+					return true
+				})
+			}
 		})
-		event.Bus.Publish(he.Name+":getprice", "")
-		event.Bus.Unsubscribe(he.Name+":getprice", he.GetPrice)
+
 	})
 
 	//获取交易手续费
 	utils.StartTimer(time.Hour*1, func() {
-		tradeFeeUrl := "https://www.huobipro.com/-/x/pro/v1/settings/fee?r=x91neu0q2cn&symbols=btcusdt,bchusdt,ethusdt,etcusdt,ltcusdt,eosusdt,xrpusdt,omgusdt,dashusdt,zecusdt,iotausdt,adausdt,steemusdt,socusdt,ctxcusdt,actusdt,btmusdt,btsusdt,ontusdt,iostusdt,htusdt,trxusdt,dtausdt,neousdt,qtumusdt,smtusdt,elausdt,venusdt,thetausdt,sntusdt,zilusdt,xemusdt,nasusdt,ruffusdt,hsrusdt,letusdt,mdsusdt,storjusdt,elfusdt,itcusdt,cvcusdt,gntusdt,bchbtc,ethbtc,ltcbtc,etcbtc,eosbtc,omgbtc,xrpbtc,dashbtc,zecbtc,iotabtc,adabtc,steembtc,polybtc,edubtc,kanbtc,lbabtc,wanbtc,bftbtc,btmbtc,ontbtc,iostbtc,htbtc,trxbtc,smtbtc,elabtc,wiccbtc,ocnbtc,zlabtc,abtbtc,mtxbtc,nasbtc,venbtc,dtabtc,neobtc,waxbtc,btsbtc,zilbtc,thetabtc,ctxcbtc,srnbtc,xembtc,icxbtc,dgdbtc,chatbtc,wprbtc,lunbtc,swftcbtc,sntbtc,meetbtc,yeebtc,elfbtc,letbtc,qtumbtc,lskbtc,itcbtc,socbtc,qashbtc,mdsbtc,ekobtc,topcbtc,mtnbtc,actbtc,hsrbtc,stkbtc,storjbtc,gnxbtc,dbcbtc,sncbtc,cmtbtc,tnbbtc,ruffbtc,qunbtc,zrxbtc,kncbtc,blzbtc,propybtc,rpxbtc,appcbtc,aidocbtc,powrbtc,cvcbtc,paybtc,qspbtc,datbtc,rdnbtc,mcobtc,rcnbtc,manabtc,utkbtc,tntbtc,gasbtc,batbtc,ostbtc,linkbtc,gntbtc,mtlbtc,evxbtc,reqbtc,adxbtc,astbtc,engbtc,saltbtc,bifibtc,bcxbtc,bcdbtc,sbtcbtc,btgbtc,eoseth,omgeth,iotaeth,adaeth,steemeth,polyeth,edueth,kaneth,lbaeth,waneth,bfteth,zrxeth,asteth,knceth,onteth,hteth,btmeth,iosteth,smteth,elaeth,trxeth,abteth,naseth,ocneth,wicceth,zileth,ctxceth,zlaeth,wpreth,dtaeth,mtxeth,thetaeth,srneth,veneth,btseth,waxeth,hsreth,icxeth,mtneth,acteth,blzeth,qasheth,ruffeth,cmteth,elfeth,meeteth,soceth,qtumeth,itceth,swftceth,yeeeth,lsketh,luneth,leteth,gnxeth,chateth,ekoeth,topceth,dgdeth,stketh,mdseth,dbceth,snceth,payeth,quneth,aidoceth,tnbeth,appceth,rdneth,utketh,powreth,bateth,propyeth,manaeth,reqeth,cvceth,qspeth,evxeth,dateth,mcoeth,gnteth,gaseth,osteth,linketh,rcneth,tnteth,engeth,salteth,adxeth"
+		tradeFeeUrl := "https://www.bithumb.com/u1/US138"
+		flag := true
 
-		utils.GetInfo("GET", tradeFeeUrl, nil, func(result gjson.Result) {
-			symbols := result.Get("data")
+		for ; flag; {
+			utils.GetHtml("GET", tradeFeeUrl, nil, func(result *goquery.Document) {
+				feeHtml1 := result.Find("#contents_f > table.g_table_list.fee > tbody > tr:nth-child(1) > td:nth-child(2)")
+				if feeHtml1 == nil {
+				} else {
+					flag = false
+					feeHtml := feeHtml1.Text()
+					f := utils.GetFeeByBithumb(feeHtml)
+					fs := f["num"]
+					fee, _ := strconv.ParseFloat(fs, 64)
+					he.SetTradeFee(fee/100, fee/100)
 
-			makerFee := 0.0
-			takerFee := 0.0
-
-			symbols.ForEach(func(key, value gjson.Result) bool {
-				makerFee = value.Get("maker-fee").Float()
-				takerFee = value.Get("taker-fee").Float()
-				return false
-			})
-
-			he.SetTradeFee(makerFee, takerFee)
-		})
-	})
-	//获取转账手续费
-	utils.StartTimer(time.Minute*15, func() {
-		var client = &http.Client{}
-		if !IsServer {
-			uProxy, _ := url.Parse("http://127.0.0.1:1080")
-
-			client = &http.Client{
-				Transport: &http.Transport{
-					Proxy: http.ProxyURL(uProxy),
-				},
-			}
-		}
-
-		client.Timeout = time.Second * 10
-
-		var coins []string
-
-		currenciesUrl := "https://www.huobipro.com/-/x/pro/v1/settings/currencys?language=zh-CN"
-
-		currenciesRequest, _ := http.NewRequest("GET", currenciesUrl, nil)
-		maxRequestCount := 5
-
-		for i := maxRequestCount; i > 0; i-- {
-			resp, err := client.Do(currenciesRequest)
-			if err != nil {
-				continue
-			}
-
-			buf := bytes.NewBuffer(make([]byte, 0, 512))
-
-			buf.ReadFrom(resp.Body)
-
-			resp.Body.Close()
-
-			status := gjson.GetBytes(buf.Bytes(), "status")
-
-			if status.String() != "ok" {
-				continue
-			}
-
-			coinsJson := gjson.GetBytes(buf.Bytes(), "data")
-			coinsJson.ForEach(func(key, value gjson.Result) bool {
-				coinName := value.Get("name")
-				coins = append(coins, coinName.String())
-				s := coinName.String()
-
-				he.SetCurrency(s)
-				return true
-			})
-		}
-
-		for _, s := range coins {
-			fee := cache.GetInstance().HGet(he.Name+"-transfer", s)
-			f, _ := fee.Float64()
-			he.TransferFees.Set(s, f)
-
-			transferFeeUrl := "https://www.huobipro.com/-/x/pro/v1/dw/withdraw-virtual/fee-range?currency=" + s
-
-			transferRequest, _ := http.NewRequest("GET", transferFeeUrl, nil)
-			for i := maxRequestCount; i > 0; i-- {
-				resp, err := client.Do(transferRequest)
-
-				if err != nil {
-					continue
+					result.Find("#contents_f > table.g_table_list.fee_in_out > tbody >tr").Each(func(i int, tr *goquery.Selection) {
+						_, exists := tr.Attr("data-coin")
+						if exists {
+							td := tr.Find("td.money_type")
+							divs := tr.Find("div.right.out_fee")
+							coinText := td.Text()
+							feeText := divs.Text()
+							if feeText != "" {
+								c := utils.GetCoinByBithumb(coinText)
+								info := NewTransferInfo()
+								info.CanDeposit = 1
+								info.CanWithdraw = 1
+								info.WithdrawFee = feeText
+								he.SetTransferFee(c["num"], info)
+							}
+						}
+					})
 				}
-
-				buf := bytes.NewBuffer(make([]byte, 0, 512))
-
-				buf.ReadFrom(resp.Body)
-
-				resp.Body.Close()
-
-				status := gjson.GetBytes(buf.Bytes(), "status")
-
-				info := NewTransferInfo()
-
-				if status.String() != "ok" {
-					he.TransferFees.Set(s, -1.0)
-					cache.GetInstance().HSet(he.Name+"-transfer", s, -1.0)
-
-					he.SetTransferFee(s, info)
-					break
-				}
-
-				datas := gjson.GetBytes(buf.Bytes(), "data")
-
-				fee := datas.Get("default-amount").Float()
-				minAmount := datas.Get("min-amount").Float()
-				maxAmount := datas.Get("max-amount").Float()
-
-				info.MinWithdraw = minAmount
-				info.MaxWithdraw = maxAmount
-				info.WithdrawFee = fee
-
-				he.SetTransferFee(s, info)
-				break
-			}
+			})
+			time.Sleep(1 * time.Second)
 		}
 	})
 }
@@ -275,8 +147,8 @@ func NewBithumbExchange() BigE {
 		TradeFees: LockMap{
 			M: make(map[string]float64),
 		},
-		TransferFees: LockMap{
-			M: make(map[string]float64),
+		TransferFees: LockMapString{
+			M: make(map[string]string),
 		},
 		Sub: exchange,
 	}

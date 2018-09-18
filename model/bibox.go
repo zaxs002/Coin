@@ -85,6 +85,11 @@ func (he *BiboxExchange) Run(symbol string) {
 			})
 		})
 	})
+
+	//检测价格是否全部获取完成
+	utils.StartTimerWithFlag(time.Second, he.Name, func() {
+		he.check(he.Name)
+	})
 }
 
 func (he BiboxExchange) FeesRun() {
@@ -103,8 +108,8 @@ func NewBiboxExchange() BigE {
 		TradeFees: LockMap{
 			M: make(map[string]float64),
 		},
-		TransferFees: LockMap{
-			M: make(map[string]float64),
+		TransferFees: LockMapString{
+			M: make(map[string]string),
 		},
 		Sub: exchange,
 	}

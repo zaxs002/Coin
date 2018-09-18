@@ -1,15 +1,15 @@
 package model
 
 import (
-	"BitCoin/utils"
-	"time"
-	"github.com/PuerkitoBio/goquery"
-	"strings"
-	"github.com/tidwall/gjson"
-		"strconv"
-	"sync"
 	"BitCoin/cache"
+	"BitCoin/utils"
+	"github.com/PuerkitoBio/goquery"
 	"github.com/gorilla/websocket"
+	"github.com/tidwall/gjson"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
 )
 
 type GateIOMessage struct {
@@ -51,7 +51,7 @@ func (ge GateIOExchange) GetPrice() {
 				m := utils.GetCoinByZb(symbol)
 				coin := m["coin"]
 				base := m["base"]
-				cache.GetInstance().HSet(ge.Name, coin+base, last)
+				cache.GetInstance().HSet(ge.Name, coin+"-"+base, last)
 			})
 	})
 }
